@@ -47,6 +47,7 @@ class TunnelREST(object):
         with closing(urllib2.urlopen(req)) as resp:
             return json.loads(resp.read())
 
+    # TODO: ?? add a flag for or keep these connections persistent?
     def _read(self, url):
         with closing(urllib2.urlopen(url)) as resp:
             return json.loads(resp.read())
