@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # encoding: utf-8
+from __future__ import with_statement
 
 import os
 import re
@@ -7,11 +8,14 @@ import optparse
 import subprocess
 import httplib
 import urllib2
+from contextlib import closing
 
 try:
     import json
 except ImportError:
     import simplejson  # Python 2.5 externel dependency
+
+from pprint import pprint
 
 
 class TunnelREST(object):
@@ -40,18 +44,22 @@ class TunnelREST(object):
         json_header = {"Content-Type": "application/json"}
         data = json.dumps(dict(DomainNames=domains))
         req = urllib2.Request(url=url, headers=json_header, data=data)
-        return json.loads(urllib2.urlopen(req).read())
+        with closing(urllib2.urlopen(req)) as resp:
+            return json.loads(resp.read())
 
     def _read(self, url):
-        return json.loads(urllib2.urlopen(url).read())
+        with closing(urllib2.urlopen(url)) as resp:
+            return json.loads(resp.read())
 
     def _delete(self, url):
         if self.base_url.startswith("https"):
-            conn = httplib.HTTPSConnection(self.host)
+            make_conn = httplib.HTTPSConnection
         else:
-            conn = httplib.HTTPConnection(self.host)
-        conn.request(method="DELETE", url=url, headers=self.auth_header)
-        return json.loads(conn.getresponse().read())
+            make_conn = httplib.HTTPConnection
+        with closing(make_conn(self.host)) as conn:
+            conn.request(method="DELETE", url=url, headers=self.auth_header)
+            resp = conn.getresponse()
+            return json.loads(resp.read())
 
     def start_tunnel(self, domains):
         return self._create(self.base_url, domains)
@@ -91,7 +99,8 @@ def get_options():
     op.add_option("-r", "--remote-port", default="80",
                   help="default: %default")
     op.add_option("-d", "--domain", action="append", dest="domains",
-                  help="default: %default")
+                  help="Requests for these will go through the tunnel."
+                       " Example: -d example.test -d '*.example.test'")
     op.add_option("--rest-url", default="https://saucelabs.com/rest",
                   help="default: %default")
 
@@ -110,8 +119,8 @@ def main():
     options = get_options()
     rest = TunnelREST(options.rest_url, options.user, options.api_key)
 
-    print rest.get_tunnels()
-    print rest.start_tunnel(options.domains)
+    pprint(rest.get_tunnels())
+    pprint(rest.start_tunnel(options.domains))
 
     raise SystemExit()
     script = get_expect_script(options)
