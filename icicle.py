@@ -2,23 +2,28 @@
 # encoding: utf-8
 from __future__ import with_statement
 
-# BUG: !! accidentally used Python 2.6 str.format all over :-/
+# TODO:
+#   * BUG: !! accidentally used Python 2.6 str.format all over :-/
+#   * Logging/timestamps
+#   * Health checks:
+#     * tunnel machine
+#     * ssh connection
 
-import os
-import re
+try:
+    import json
+except ImportError:
+    import simplejson as json  # Python 2.5 external dependency
+
 import optparse
+import re
 import subprocess
+import signal
 import httplib
 import urllib2
 import time
 from contextlib import closing
 
-try:
-    import json
-except ImportError:
-    import simplejson  # Python 2.5 externel dependency
-
-from pprint import pprint
+REST_POLL_WAIT = 3
 
 
 class TunnelMachine(object):
@@ -31,7 +36,7 @@ class TunnelMachine(object):
         self.base_url = "{0[rest_url]}/{0[user]}/tunnels".format(locals())
         self.rest_host = self._host_search(rest_url).group(1)
         self.auth_header = dict(Authorization="Basic " + "{0}:{1}"
-                                "".format(user,password).encode("base64"))
+                                "".format(user, password).encode("base64"))
         self._set_urlopen(rest_url, user, password)
         self._start_tunnel()
 
@@ -84,32 +89,44 @@ class TunnelMachine(object):
         doc = self._get_doc(req)
         # TODO: handle this error
         assert doc.get('ok')
-        self.id = doc['id']  # TODO: handle this not existing (fail)
+        # TODO: handle 'id' not existing — fail
+        self.id = doc['id']
         self.url = "%s/%s" % (self.base_url, self.id)
 
-        # Wait for the machine to start running
+    def ready_wait(self):
+        """Wait for the machine to reach the 'running' state."""
+        previous_status = None
         while True:
             doc = self._get_doc(self.url)
             status = doc.get('Status')
             # TODO: error on halting, terminated, etc.
             if status == "running":
                 break
-            print u"Tunnel is %s …" % status
-            time.sleep(5)
+            if status != previous_status:
+                print u"Tunnel is %s …" % status
+            previous_status = status
+            time.sleep(REST_POLL_WAIT)
         self.host = doc['Host']
         print "Tunnel is running on %s!" % self.host
 
     def shutdown(self):
+        print "Shutting down tunnel: %s" % self.id
         doc = self._get_delete_doc(self.url)
         assert doc.get('ok')
+
+        previous_status = None
         while True:
             doc = self._get_doc(self.url)
             status = doc.get('Status')
             if status == "terminated":
                 break
-            print u"Tunnel is %s …" % status
-            time.sleep(5)
+            if status != previous_status:
+                print u"Tunnel is %s …" % status
+            previous_status = status
+            time.sleep(REST_POLL_WAIT)
         print "Tunnel is shutdown!"
+
+    close = shutdown
 
 
 def get_expect_script(options, remote_host):
@@ -122,6 +139,18 @@ expect *password:
 send -- {0.api_key}\\r
 interact
 """.format(options, remote_host).split("\n"))
+
+
+def setup_signal_handler(tunnel):
+
+    def signal_handler(signum, frame):
+        print "Received signal %s." % signum
+        tunnel.shutdown()
+        print "Goodbye."
+        raise SystemExit()
+
+    for sig in ["SIGHUP", "SIGINT", "SIGQUIT", "SIGTERM"]:
+        signal.signal(getattr(signal, sig), signal_handler)
 
 
 def get_options():
@@ -148,16 +177,24 @@ def get_options():
 
     return options
 
-# https://saucelabs.com/rest/brainsik/tunnels/507622006f19f4d8b87dd6d9eff56ab1
-# https://{0.user}:{0.api_key}@
 
 def main():
     options = get_options()
+
     tunnel = TunnelMachine(options.rest_url, options.user, options.api_key,
                            options.domains)
+    setup_signal_handler(tunnel)
+    tunnel.ready_wait()
+
     script = get_expect_script(options, tunnel.host)
-    subprocess.call('exec expect -c "%s"' % script, shell=True,
-                    stdout=open(os.devnull))
+    reverse_ssh = subprocess.Popen('expect -c "%s"' % script, shell=True)
+    while reverse_ssh.poll() is None:
+        time.sleep(1)
+    if reverse_ssh.returncode != 0:
+        print "SSH tunnel exited with error code %d" % reverse_ssh.returncode
+    else:
+        print "SSH tunnel process exited"
+    tunnel.shutdown()
 
 
 if __name__ == '__main__':
