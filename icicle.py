@@ -26,6 +26,18 @@ from contextlib import closing
 REST_POLL_WAIT = 3
 
 
+class RESTConnectionError(Exception):
+
+    def __init__(self, e):
+        self.e = e
+
+    def __repr__(self):
+        return "Failed to connect to REST interface: %s" % str(self.e)
+
+    def __str__(self):
+        return repr(self)
+
+
 class TunnelMachine(object):
 
     _host_search = re.compile("//([^/]+)").search
@@ -50,10 +62,13 @@ class TunnelMachine(object):
         self.urlopen = opener.open
 
     def _get_doc(self, url_or_req):
-        with closing(self.urlopen(url_or_req)) as resp:
-            # TODO: handle this error
-            assert resp.msg == "OK"
-            return json.loads(resp.read())
+        try:
+            with closing(self.urlopen(url_or_req)) as resp:
+                # TODO: handle this error
+                assert resp.msg == "OK"
+                return json.loads(resp.read())
+        except urllib2.URLError, e:
+            raise RESTConnectionError(e)
 
     def _get_delete_doc(self, url):
         if self.base_url.startswith("https"):
@@ -61,7 +76,12 @@ class TunnelMachine(object):
         else:
             make_conn = httplib.HTTPConnection
         with closing(make_conn(self.rest_host)) as conn:
-            conn.request(method="DELETE", url=url, headers=self.auth_header)
+            try:
+                conn.request(
+                    method="DELETE", url=url, headers=self.auth_header)
+            except socket.gaiaerror, e:
+                raise RESTConnectionError(e)
+
             # TODO: check HTTP OK
             resp = conn.getresponse()
             return json.loads(resp.read())
@@ -198,4 +218,7 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except RESTConnectionError, e:
+        print e
