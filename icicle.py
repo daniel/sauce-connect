@@ -8,6 +8,9 @@ from __future__ import with_statement
 #   * Health checks:
 #     * tunnel machine
 #     * ssh connection
+#     * port being forwarded to
+#       * this is useful in letting us know if the customer is forwarding
+#         connections somewhere that's down
 
 try:
     import json
