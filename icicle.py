@@ -3,7 +3,6 @@
 from __future__ import with_statement
 
 # TODO:
-#   * BUG: !! accidentally used Python 2.6 str.format all over :-/
 #   * Logging/timestamps
 #   * Health checks:
 #     * tunnel machine
@@ -48,10 +47,10 @@ class TunnelMachine(object):
     def __init__(self, rest_url, user, password, domains):
         self.user = user
         self.domains = set(domains)
-        self.base_url = "{0[rest_url]}/{0[user]}/tunnels".format(locals())
+        self.base_url = "%(rest_url)s/%(user)s/tunnels" % locals()
         self.rest_host = self._host_search(rest_url).group(1)
-        self.auth_header = dict(Authorization="Basic " + "{0}:{1}"
-                                "".format(user, password).encode("base64"))
+        self.basic_auth_header = {"Authorization": "Basic %s" %
+                                 ("%s:%s" % (user, password)).encode("base64")}
         self._set_urlopen(rest_url, user, password)
         self._start_tunnel()
 
@@ -81,7 +80,7 @@ class TunnelMachine(object):
         with closing(make_conn(self.rest_host)) as conn:
             try:
                 conn.request(
-                    method="DELETE", url=url, headers=self.auth_header)
+                    method="DELETE", url=url, headers=self.basic_auth_header)
             except socket.gaiaerror, e:
                 raise RESTConnectionError(e)
 
@@ -115,6 +114,7 @@ class TunnelMachine(object):
         # TODO: handle 'id' not existing — fail
         self.id = doc['id']
         self.url = "%s/%s" % (self.base_url, self.id)
+        print "Tunnel provisioned: %s" % self.id
 
     def ready_wait(self):
         """Wait for the machine to reach the 'running' state."""
@@ -153,15 +153,25 @@ class TunnelMachine(object):
 
 
 def get_expect_script(options, remote_host):
-    return ";".join("""set timeout -1
-spawn ssh-keygen -R {1}
-spawn ssh -p 22 -N -R 0.0.0.0:{0.remote_port}:{0.host}:{0.port} {1}
+    options.remote_host = remote_host
+
+    # let us use a mapping key in the string interpolation below
+    def getitem(key):
+        try:
+            return getattr(options, key)
+        except AttributeError:
+            raise KeyError
+    options.__getitem__ = getitem
+
+    return ";".join((("""set timeout -1
+spawn ssh-keygen -R %(remote_host)s
+spawn ssh -p 22 -N -R 0.0.0.0:%(remote_port)s:%(host)s:%(port)s %(remote_host)s
 expect \\"Are you sure you want to continue connecting (yes/no)?\\"
 send -- yes\\r
 expect *password:
-send -- {0.api_key}\\r
+send -- %(api_key)s\\r
 interact
-""".format(options, remote_host).split("\n"))
+""" % options)).split("\n"))
 
 
 def setup_signal_handler(tunnel):
