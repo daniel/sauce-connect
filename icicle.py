@@ -4,18 +4,19 @@ from __future__ import with_statement
 
 # TODO:
 #   * Logging/timestamps
-#   * Health checks:
-#     * tunnel machine
-#     * ssh connection
-#     * port being forwarded to
-#       * this is useful in letting us know if the customer is forwarding
-#         connections somewhere that's down
+#   * Health checks
+#     * user's network can get to host being forwarded to
+#     * SSH connection to tunnel VM is up
+#   * REST checks
+#     * Tunnel is still running (may be shutdown by someone else)
+#     * Renew lease (not implemented)
 
 try:
     import json
 except ImportError:
     import simplejson as json  # Python 2.5 external dependency
 
+import platform
 import optparse
 import re
 import subprocess
@@ -114,7 +115,7 @@ class TunnelMachine(object):
         # TODO: handle 'id' not existing — fail
         self.id = doc['id']
         self.url = "%s/%s" % (self.base_url, self.id)
-        print "Tunnel provisioned: %s" % self.id
+        print "Provisioned tunnel: %s" % self.id
 
     def ready_wait(self):
         """Wait for the machine to reach the 'running' state."""
@@ -126,7 +127,7 @@ class TunnelMachine(object):
             if status == "running":
                 break
             if status != previous_status:
-                print u"Tunnel is %s …" % status
+                print u"Tunnel is %s .." % status
             previous_status = status
             time.sleep(REST_POLL_WAIT)
         self.host = doc['Host']
@@ -144,7 +145,7 @@ class TunnelMachine(object):
             if status == "terminated":
                 break
             if status != previous_status:
-                print u"Tunnel is %s …" % status
+                print u"Tunnel is %s .." % status
             previous_status = status
             time.sleep(REST_POLL_WAIT)
         print "Tunnel is shutdown!"
@@ -152,20 +153,16 @@ class TunnelMachine(object):
     close = shutdown
 
 
+def get_plink_command(options, remote_host):
+    options.remote_host = remote_host
+    return "plink -l %(user)s -pw %(api_key)s -N -R 0.0.0.0:%(remote_port)s:%(host)s:%(port)s %(remote_host)s" % options
+
+
 def get_expect_script(options, remote_host):
     options.remote_host = remote_host
-
-    # let us use a mapping key in the string interpolation below
-    def getitem(key):
-        try:
-            return getattr(options, key)
-        except AttributeError:
-            raise KeyError
-    options.__getitem__ = getitem
-
     return ";".join((("""set timeout -1
 spawn ssh-keygen -R %(remote_host)s
-spawn ssh -p 22 -N -R 0.0.0.0:%(remote_port)s:%(host)s:%(port)s %(remote_host)s
+spawn ssh -p 22 -l %(user)s -N -R 0.0.0.0:%(remote_port)s:%(host)s:%(port)s %(remote_host)s
 expect \\"Are you sure you want to continue connecting (yes/no)?\\"
 send -- yes\\r
 expect *password:
@@ -208,19 +205,35 @@ def get_options():
         if not hasattr(options, opt) or not getattr(options, opt):
             op.error("Missing required argument(s)!")
 
+    # let us use a mapping key in the string interpolations
+    def getitem(key):
+        try:
+            return getattr(options, key)
+        except AttributeError:
+            raise KeyError
+    options.__getitem__ = getitem
+
     return options
 
 
 def main():
+    is_windows = platform.system().lower() == "windows"
     options = get_options()
 
     tunnel = TunnelMachine(options.rest_url, options.user, options.api_key,
                            options.domains)
-    setup_signal_handler(tunnel)
+    if not is_windows:
+        setup_signal_handler(tunnel)
     tunnel.ready_wait()
 
-    script = get_expect_script(options, tunnel.host)
-    reverse_ssh = subprocess.Popen('expect -c "%s"' % script, shell=True)
+    if is_windows:
+        cmd = "echo 'n' | %s" % get_plink_command(options, tunnel.host)
+    else:
+        cmd = 'expect -c "%s"' % get_expect_script(options, tunnel.host)
+
+    print "Setting up reverse SSH connection"
+    print "cmd: %s" % cmd
+    reverse_ssh = subprocess.Popen(cmd, shell=True)
     while reverse_ssh.poll() is None:
         time.sleep(1)
     if reverse_ssh.returncode != 0:
