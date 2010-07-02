@@ -3,13 +3,17 @@
 from __future__ import with_statement
 
 # TODO:
-#   * Logging/timestamps
+#   * Use logging with timestamps
+#   * Cleanup output
+#     * Silence SSH output (debug mode?)
 #   * Health checks
 #     * user's network can get to host being forwarded to
 #     * SSH connection to tunnel VM is up
 #   * REST checks
-#     * Tunnel is still running (may be shutdown by someone else)
+#     * Tunnel is still running (may be shutdown by something else)
 #     * Renew lease (not implemented)
+#   * Package with dependencies and licenses
+#   * Developer docs for how to build Windows .exe
 
 try:
     import json
@@ -85,7 +89,7 @@ class TunnelMachine(object):
             try:
                 conn.request(
                     method="DELETE", url=url, headers=self.basic_auth_header)
-            except socket.gaiaerror, e:
+            except socket.gaierror, e:
                 raise RESTConnectionError(e)
 
             # TODO: check HTTP OK
@@ -156,38 +160,42 @@ class TunnelMachine(object):
     close = shutdown
 
 
-def get_plink_command(options, remote_host):
-    options.remote_host = remote_host
-    return "plink -l %(user)s -pw %(api_key)s -N -R 0.0.0.0:%(remote_port)s:%(host)s:%(port)s %(remote_host)s" % options
+def get_plink_command(options):
+    return ("plink -v -l %(user)s -pw %(api_key)s"
+            "-N -R 0.0.0.0:%(remote_port)s:%(host)s:%(port)s %(remote_host)s"
+            % options)
 
 
-def get_expect_script(options, remote_host):
-    options.remote_host = remote_host
-    return ";".join((("""set timeout -1
+def get_expect_script(options):
+    return ";".join(("""
+set timeout -1
 spawn ssh-keygen -R %(remote_host)s
-spawn ssh -p 22 -l %(user)s -N -R 0.0.0.0:%(remote_port)s:%(host)s:%(port)s %(remote_host)s
+spawn ssh -p 22 -l %(user)s"""
+""" -N -R 0.0.0.0:%(remote_port)s:%(host)s:%(port)s %(remote_host)s
 expect \\"Are you sure you want to continue connecting (yes/no)?\\"
 send -- yes\\r
 expect *password:
 send -- %(api_key)s\\r
 interact
-""" % options)).split("\n"))
+""" % options).strip().split("\n"))
 
 
 def setup_signal_handler(tunnel):
 
-    def signal_handler(signum, frame):
+    def sig_handler(signum, frame):
         print "Received signal %s." % signum
         tunnel.shutdown()
         print "Goodbye."
         raise SystemExit()
 
+    # TODO: remove SIGTERM when we implement tunnel leases
     if IS_WINDOWS:
+        # TODO: What do these Windows signals mean?
         supported_signals = ["SIGABRT", "SIGBREAK", "SIGINT", "SIGTERM"]
     else:
         supported_signals = ["SIGHUP", "SIGINT", "SIGQUIT", "SIGTERM"]
     for sig in supported_signals:
-        signal.signal(getattr(signal, sig), signal_handler)
+        signal.signal(getattr(signal, sig), sig_handler)
 
 
 def get_options():
@@ -212,7 +220,7 @@ def get_options():
         if not hasattr(options, opt) or not getattr(options, opt):
             op.error("Missing required argument(s)!")
 
-    # let us use a mapping key in the string interpolations
+    # allow us to use a mapping key in string interpolations
     def getitem(key):
         try:
             return getattr(options, key)
@@ -230,11 +238,12 @@ def main():
                            options.domains)
     setup_signal_handler(tunnel)
     tunnel.ready_wait()
+    options.remote_host = tunnel.host
 
     if IS_WINDOWS:
-        cmd = "echo 'n' | %s" % get_plink_command(options, tunnel.host)
+        cmd = "echo 'n' | %s" % get_plink_command(options)
     else:
-        cmd = 'expect -c "%s"' % get_expect_script(options, tunnel.host)
+        cmd = 'expect -c "%s"' % get_expect_script(options)
 
     print "Setting up reverse SSH connection"
     print "cmd: %s" % cmd
@@ -244,7 +253,7 @@ def main():
     if reverse_ssh.returncode != 0:
         print "SSH tunnel exited with error code %d" % reverse_ssh.returncode
     else:
-        print "SSH tunnel process exited"
+        print "SSH tunnel process exited with success code"
     tunnel.shutdown()
 
 
