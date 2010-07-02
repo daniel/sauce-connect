@@ -16,15 +16,18 @@ try:
 except ImportError:
     import simplejson as json  # Python 2.5 external dependency
 
-import platform
 import optparse
 import re
 import subprocess
 import signal
 import httplib
+import socket  # httplib can raise socket.gaierror
 import urllib2
 import time
 from contextlib import closing
+
+import platform
+IS_WINDOWS = platform.system().lower() == "windows"
 
 REST_POLL_WAIT = 3
 
@@ -179,7 +182,11 @@ def setup_signal_handler(tunnel):
         print "Goodbye."
         raise SystemExit()
 
-    for sig in ["SIGHUP", "SIGINT", "SIGQUIT", "SIGTERM"]:
+    if IS_WINDOWS:
+        supported_signals = ["SIGABRT", "SIGBREAK", "SIGINT", "SIGTERM"]
+    else:
+        supported_signals = ["SIGHUP", "SIGINT", "SIGQUIT", "SIGTERM"]
+    for sig in supported_signals:
         signal.signal(getattr(signal, sig), signal_handler)
 
 
@@ -217,16 +224,14 @@ def get_options():
 
 
 def main():
-    is_windows = platform.system().lower() == "windows"
     options = get_options()
 
     tunnel = TunnelMachine(options.rest_url, options.user, options.api_key,
                            options.domains)
-    if not is_windows:
-        setup_signal_handler(tunnel)
+    setup_signal_handler(tunnel)
     tunnel.ready_wait()
 
-    if is_windows:
+    if IS_WINDOWS:
         cmd = "echo 'n' | %s" % get_plink_command(options, tunnel.host)
     else:
         cmd = 'expect -c "%s"' % get_expect_script(options, tunnel.host)
