@@ -3,6 +3,7 @@
 from __future__ import with_statement
 
 # TODO:
+#   * Error handling and retry
 #   * Use logging with timestamps
 #   * Cleanup output
 #     * Silence SSH output (debug mode?)
@@ -15,6 +16,7 @@ from __future__ import with_statement
 #   * Package with dependencies and licenses
 #   * Developer docs for how to build Windows .exe
 #   * Version check
+#   * Stats reporting / UserAgent
 
 try:
     import json
@@ -23,6 +25,7 @@ except ImportError:
 
 import optparse
 import re
+import os
 import subprocess
 import signal
 import httplib
@@ -53,13 +56,17 @@ class TunnelMachine(object):
 
     _host_search = re.compile("//([^/]+)").search
 
-    def __init__(self, rest_url, user, password, domains):
+    def __init__(self, rest_url, user, password, domains, debug=False):
         self.user = user
         self.domains = set(domains)
+        self.debug = debug
+
+        self.is_shutdown = False
         self.base_url = "%(rest_url)s/%(user)s/tunnels" % locals()
         self.rest_host = self._host_search(rest_url).group(1)
         self.basic_auth_header = {"Authorization": "Basic %s" %
                                  ("%s:%s" % (user, password)).encode("base64")}
+
         self._set_urlopen(rest_url, user, password)
         self._start_tunnel()
 
@@ -82,6 +89,7 @@ class TunnelMachine(object):
             raise RESTConnectionError(e)
 
     def _get_delete_doc(self, url):
+        # urllib2 doesn support the DELETE method (lame), so we build our own
         if self.base_url.startswith("https"):
             make_conn = httplib.HTTPSConnection
         else:
@@ -90,7 +98,7 @@ class TunnelMachine(object):
             try:
                 conn.request(
                     method="DELETE", url=url, headers=self.basic_auth_header)
-            except socket.gaierror, e:
+            except (socket.gaierror, socket.error), e:
                 raise RESTConnectionError(e)
 
             # TODO: check HTTP OK
@@ -123,7 +131,8 @@ class TunnelMachine(object):
         # TODO: handle 'id' not existing — fail
         self.id = doc['id']
         self.url = "%s/%s" % (self.base_url, self.id)
-        print "Provisioned tunnel: %s" % self.id
+        if self.debug:
+            print "Provisioned tunnel: %s" % self.id
 
     def ready_wait(self):
         """Wait for the machine to reach the 'running' state."""
@@ -142,7 +151,14 @@ class TunnelMachine(object):
         print "Tunnel is running on %s!" % self.host
 
     def shutdown(self):
-        print "Shutting down tunnel: %s" % self.id
+        if self.is_shutdown:
+            return
+
+        shutdown_msg = "Shutting down tunnel:"
+        if self.debug:
+            shutdown_msg += " %s" % self.id
+        print shutdown_msg
+
         doc = self._get_delete_doc(self.url)
         assert doc.get('ok')
 
@@ -157,22 +173,26 @@ class TunnelMachine(object):
             previous_status = status
             time.sleep(REST_POLL_WAIT)
         print "Tunnel is shutdown!"
+        self.is_shutdown = True
 
+    # Let us being used with contextlib.closing
     close = shutdown
 
 
-def get_plink_command(options):
+def get_plink_command(options, tunnel_host):
+    options.tunnel_host = tunnel_host
     return ("plink -v -l %(user)s -pw %(api_key)s"
-            "-N -R 0.0.0.0:%(remote_port)s:%(host)s:%(port)s %(remote_host)s"
+            "-N -R 0.0.0.0:%(remote_port)s:%(host)s:%(port)s %(tunnel_host)s"
             % options)
 
 
-def get_expect_script(options):
+def get_expect_script(options, tunnel_host):
+    options.tunnel_host = tunnel_host
     return ";".join(("""
 set timeout -1
-spawn ssh-keygen -R %(remote_host)s
-spawn ssh -p 22 -l %(user)s"""
-""" -N -R 0.0.0.0:%(remote_port)s:%(host)s:%(port)s %(remote_host)s
+spawn ssh-keygen -q -R %(tunnel_host)s
+spawn ssh -q -p 22 -l %(user)s"""
+""" -N -R 0.0.0.0:%(remote_port)s:%(host)s:%(port)s %(tunnel_host)s
 expect \\"Are you sure you want to continue connecting (yes/no)?\\"
 send -- yes\\r
 expect *password:
@@ -181,10 +201,32 @@ interact
 """ % options).strip().split("\n"))
 
 
+def run_reverse_ssh(options, tunnel):
+    print "Setting up reverse SSH connection .."
+    if IS_WINDOWS:
+        cmd = "echo 'n' | %s" % get_plink_command(options, tunnel.host)
+    else:
+        cmd = 'expect -c "%s"' % get_expect_script(options, tunnel.host)
+
+    with open(os.devnull) as devnull:
+        stdout = devnull
+        if options.debug:
+            print "cmd: %s" % cmd
+            stdout = None
+        reverse_ssh = subprocess.Popen(cmd, shell=True, stdout=stdout)
+    while reverse_ssh.poll() is None:
+        time.sleep(1)
+    if reverse_ssh.returncode != 0:
+        print ("SSH tunnel exited with error code %d"
+               % reverse_ssh.returncode)
+    else:
+        print "SSH tunnel process exited with success code"
+
+
 def setup_signal_handler(tunnel):
 
     def sig_handler(signum, frame):
-        print "Received signal %s." % signum
+        print "Received signal %d" % signum
         tunnel.shutdown()
         print "Goodbye."
         raise SystemExit()
@@ -213,6 +255,7 @@ def get_options():
     op.add_option("-d", "--domain", action="append", dest="domains",
                   help="Requests for these will go through the tunnel."
                        " Example: -d example.test -d '*.example.test'")
+    op.add_option("--debug", action="store_true", default=False)
     op.add_option("--rest-url", default="https://saucelabs.com/rest",
                   help="default: %default")
 
@@ -235,27 +278,11 @@ def get_options():
 def main():
     options = get_options()
 
-    tunnel = TunnelMachine(options.rest_url, options.user, options.api_key,
-                           options.domains)
-    setup_signal_handler(tunnel)
-    tunnel.ready_wait()
-    options.remote_host = tunnel.host
-
-    if IS_WINDOWS:
-        cmd = "echo 'n' | %s" % get_plink_command(options)
-    else:
-        cmd = 'expect -c "%s"' % get_expect_script(options)
-
-    print "Setting up reverse SSH connection"
-    print "cmd: %s" % cmd
-    reverse_ssh = subprocess.Popen(cmd, shell=True)
-    while reverse_ssh.poll() is None:
-        time.sleep(1)
-    if reverse_ssh.returncode != 0:
-        print "SSH tunnel exited with error code %d" % reverse_ssh.returncode
-    else:
-        print "SSH tunnel process exited with success code"
-    tunnel.shutdown()
+    _args = (options.rest_url, options.user, options.api_key, options.domains)
+    with closing(TunnelMachine(*_args)) as tunnel:
+        setup_signal_handler(tunnel)
+        tunnel.ready_wait()
+        run_reverse_ssh(options, tunnel)
 
 
 if __name__ == '__main__':
