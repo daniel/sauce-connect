@@ -14,6 +14,7 @@ from __future__ import with_statement
 #     * Renew lease (not implemented)
 #   * Package with dependencies and licenses
 #   * Developer docs for how to build Windows .exe
+#   * Version check
 
 try:
     import json
