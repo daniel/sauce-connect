@@ -6,19 +6,23 @@ from __future__ import with_statement
 #   * Error handling and retry
 #   * Package with dependencies and licenses
 #   * Daemonizing
+#     * ?? log to a file
 #   * Developer docs for how to build Windows .exe
 #   * Basic health checks
 #     * user's network can get to host being forwarded to
 #     * user's network can get to the tunnel host
 #   * Stats reporting / UserAgent
 #   * Version check
-#   * REST checks
-#     * Tunnel is still running (may be shutdown by something else)
 #
 # TODO later:
 #   * Usage message
 #   * REST checks
+#     * Tunnel is still running (may be shutdown by something else)
 #     * Renew lease (not implemented)
+#
+# TODO much later:
+#   * Close ssh-keygen process after use
+#
 
 try:
     import json
