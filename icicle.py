@@ -2,17 +2,19 @@
 # encoding: utf-8
 from __future__ import with_statement
 
-# TODO MVP:
+# TODO minimum:
 #   * Error handling and retry
 #   * Package with dependencies and licenses
-#   * Daemonizing
-#     * ?? log to a file
 #   * Developer docs for how to build Windows .exe
-#   * Basic health checks
-#     * user's network can get to host being forwarded to
-#     * user's network can get to the tunnel host
-#   * Stats reporting / UserAgent
 #   * Version check
+#
+# TODO minimum - problematic:
+#   * Daemonizing
+#     * os.fork() not on Windows
+#     * can't send file descriptors to null or Expect script fails
+#   * Stats reporting via REST
+#     * reporting via the REST interface requires backend work to provide an
+#       updateable field; backoff to UserAgent instead?
 #
 # TODO later:
 #   * Usage message
@@ -24,11 +26,6 @@ from __future__ import with_statement
 #   * Close ssh-keygen process after use
 #
 
-try:
-    import json
-except ImportError:
-    import simplejson as json  # Python 2.5 external dependency
-
 import optparse
 import re
 import os
@@ -39,13 +36,26 @@ import socket
 import urllib2
 import time
 import platform
+import sys
 import logging
+import logging.handlers
 from contextlib import closing
+from collections import defaultdict
 
-is_windows = platform.system().lower() == "windows"
-logger = logging.getLogger("sauce_tunnel")
+try:
+    import json
+except ImportError:
+    import simplejson as json  # Python 2.5 dependency
+
+NAME = __name__
+VERSION = "dev"
 
 REST_POLL_WAIT = 3
+HEALTH_CHECK_INTERVAL = 30
+HEALTH_CHECK_FAIL = 5 * 60  # no good check after this amount of time == fail
+
+is_windows = platform.system().lower() == "windows"
+logger = logging.getLogger(NAME)
 
 
 class RESTConnectionError(Exception):
@@ -179,19 +189,44 @@ class TunnelMachine(object):
         logger.info("Tunnel is shutdown!")
         self.is_shutdown = True
 
-    # Let us being used with contextlib.closing
+    # Make us usable with contextlib.closing
     close = shutdown
 
 
-def tcp_check(host, port):
+def tcp_connected(host, port):
     with closing(socket.socket()) as sock:
+        logger.debug("Trying TCP connection to %s:%s" % (host, port))
         try:
             sock.connect((host, port))
         except (socket.gaierror, socket.error), e:
             logger.warning(
-                "Connection failed to %s:%s - %s", host, port, str(e))
+                "Your network can't connect to %s:%s - %s", host, port, str(e))
+            logger.warning(
+                "Your tests may be affected by poor network connectivity.")
             return False
         return True
+
+
+last_tcp_connect = defaultdict(time.time)
+
+def do_health_checks(options, tunnel):
+    global last_tcp_connect
+
+    # check the ports we are forwarding to
+    to_check = [(options.host, int(port)) for port in options.ports]
+    # check we can get to the tunnel machine
+    to_check.append((tunnel.host, 22))
+
+    for port, host in to_check:
+        pair = (port, host)
+        if tcp_connected(*pair):
+            last_tcp_connect[pair] = time.time()
+        elif time.time() - last_tcp_connect[pair] > HEALTH_CHECK_FAIL:
+            logger.error("Could not connect to %s:%s" % pair +
+                         " for %ss" % HEALTH_CHECK_FAIL)
+            tunnel.shutdown()
+            logger.info("Exiting.")
+            raise SystemExit()
 
 
 def _get_ssh_dash_Rs(options):
@@ -222,24 +257,35 @@ def get_expect_script(options, tunnel_host):
 
 
 def run_reverse_ssh(options, tunnel):
-    logger.info("Setting up reverse SSH connection ..")
+    logger.info("Starting SSH process ..")
     if is_windows:
         cmd = "echo 'n' | %s" % get_plink_command(options, tunnel.host)
     else:
         cmd = 'expect -c "%s"' % get_expect_script(options, tunnel.host)
 
     with open(os.devnull) as devnull:
-        stdout = devnull if not options.debug else None
+        stdout = devnull  #if not options.debug else None
         logger.debug("running cmd: %s" % cmd)
-        reverse_ssh = subprocess.Popen(cmd, shell=True, stdout=stdout)
+        reverse_ssh = subprocess.Popen("exec %s" % cmd, shell=True,
+                                       stdout=stdout)
+
+    # ssh process is running
+    announced_running = False
+    start_time = int(time.time())
     while reverse_ssh.poll() is None:
+        if (int(time.time()) - start_time) % HEALTH_CHECK_INTERVAL == 0:
+            do_health_checks(options, tunnel)
+        if not announced_running:
+            logger.info("SSH is running. You may start your tests.")
+            announced_running = True
         time.sleep(1)
+
+    # ssh process has exited
     if reverse_ssh.returncode != 0:
         logger.warning("SSH tunnel exited with error code %d",
                        reverse_ssh.returncode)
     else:
         logger.info("SSH tunnel process exited with success code")
-
 
 def setup_signal_handler(tunnel):
 
@@ -260,40 +306,56 @@ def setup_signal_handler(tunnel):
 
 
 def get_options():
-    # TODO: use option groups to separate the "advanced" options
+    # defaults we need to set outside of optparse
+    port = "80"
+    remote_port = "80"
+    #logfile = "%s.log" % NAME
+
     op = optparse.OptionParser()
     op.add_option("-u", "--user", "--username")
     op.add_option("-k", "--api-key")
     op.add_option("-s", "--host", default="localhost",
                   help="[default: %default]")
     op.add_option("-p", "--port", action="append", dest="ports", default=[],
-                  help="[default: 80]")
+                  help="[default: %s]" % port)
     op.add_option("-d", "--domain", action="append", dest="domains",
                   help="Requests for these will go through the tunnel."
                        " Example: -d example.test -d '*.example.test'")
+    op.add_option("-q", "--quiet", "-l", "--log",
+                  action="store_true", default=False,
+                  help="Sends output to a logfile instead of stdout.")
+    #op.add_option("--daemonize", action="store_true", default=False)
 
     og = optparse.OptionGroup(op, "Advanced options")
     og.add_option("-r", "--remote-port",
         action="append", dest="remote_ports", default=[],
         help="The port your tests expect to hit when they run."
-             " By default, we use port 80, the standard webserver port."
+             " By default, we use port %s, the standard webserver port."
              " If you know for sure _all_ your tests use something like"
-             " http://site.test:8080/ then set this 8080.")
+             " http://site.test:8080/ then set this 8080." % remote_port)
+    #og.add_option("--pidfile", default="%s.pid" % NAME,
+    #      help="Name of the pidfile to drop when the --daemonize option is"
+    #           "used. [default: %default]")
+    og.add_option("--logfile", default="%s.log" % NAME,
+          help="Name of the logfile to write to. [default: %default]")
     op.add_option_group(og)
 
     og = optparse.OptionGroup(op, "Script debugging options")
-    og.add_option("--debug", action="store_true", default=False)
+    og.add_option("--debug", action="store_true", default=False,
+                  help="Spews extra info into ")
     og.add_option("--rest-url", default="https://saucelabs.com/rest",
                   help="[default: %default]")
     op.add_option_group(og)
 
     (options, args) = op.parse_args()
 
-    # manually set defaults for append types (go optparse)
+    # manually set these defaults
     if options.ports == []:
-        options.ports.append("80")
+        options.ports.append(port)
     if options.remote_ports == []:
-        options.remote_ports.append("80")
+        options.remote_ports.append(remote_port)
+    #if options.daemonize:
+    #    options.logfile = options.logfile or logfile
 
     if len(options.ports) != len(options.remote_ports):
         op.error("Each port (-p) being forwarded to requires a corresponding "
@@ -308,19 +370,31 @@ def get_options():
     return options
 
 
-def setup_logging(logfile=None, debug=False):
-    loglevel = (logging.INFO, logging.DEBUG)[bool(debug)]
+def setup_logging(logfile=None, quiet=False, debug=False):
+    logger.setLevel(logging.DEBUG)
+
+    if not quiet:
+        stdout = logging.StreamHandler(sys.stdout)
+        stdout.setLevel(logging.INFO)
+        stdout.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
+        logger.addHandler(stdout)
+
     if logfile:
-        print "Sending messages to %s" % logfile
-        phormat = "%(asctime)s - %(name)s:%(lineno)d - %(levelname)s - %(message)s"
-        logging.basicConfig(level=loglevel, format=phormat, filename=logfile)
-    else:
-        logging.basicConfig(level=loglevel, format="%(asctime)s - %(message)s")
+        if debug and not quiet:
+            print "Debug messages will be sent to %s" % logfile
+        fileout = logging.handlers.RotatingFileHandler(
+            filename=logfile, maxBytes=256 * 1024 ** 2, backupCount=8)
+        fileout.setLevel((logging.INFO, logging.DEBUG)[bool(debug)])
+        fileout.setFormatter(logging.Formatter(
+            "%(asctime)s - %(name)s:%(lineno)d - %(levelname)s - %(message)s"))
+        logger.addHandler(fileout)
 
 
 def main():
+    os.umask(0077)
     options = get_options()
-    setup_logging(debug=options.debug)
+    setup_logging(options.logfile, options.quiet, options.debug)
+    logger.info("Starting.")
 
     try:
         with closing(TunnelMachine(
@@ -331,7 +405,9 @@ def main():
             run_reverse_ssh(options, tunnel)
     except RESTConnectionError, e:
         logger.error(e)
+    logger.info("Exiting.")
 
 
 if __name__ == '__main__':
+    NAME = os.path.basename(__file__).rpartition(".py")[0]
     main()
