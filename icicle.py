@@ -5,6 +5,7 @@ from __future__ import with_statement
 # TODO:
 #   * Error handling and retry
 #   * Use logging with timestamps
+#   * Usage message
 #   * Cleanup output
 #     * Silence SSH output (debug mode?)
 #   * Health checks
@@ -17,6 +18,7 @@ from __future__ import with_statement
 #   * Developer docs for how to build Windows .exe
 #   * Version check
 #   * Stats reporting / UserAgent
+#   * Daemonizing
 
 try:
     import json
@@ -32,10 +34,12 @@ import httplib
 import socket  # httplib can raise socket.gaierror
 import urllib2
 import time
+import platform
+import logging
 from contextlib import closing
 
-import platform
-IS_WINDOWS = platform.system().lower() == "windows"
+is_windows = platform.system().lower() == "windows"
+logger = logging.getLogger("sauce_tunnel")
 
 REST_POLL_WAIT = 3
 
@@ -56,10 +60,9 @@ class TunnelMachine(object):
 
     _host_search = re.compile("//([^/]+)").search
 
-    def __init__(self, rest_url, user, password, domains, debug=False):
+    def __init__(self, rest_url, user, password, domains):
         self.user = user
         self.domains = set(domains)
-        self.debug = debug
 
         self.is_shutdown = False
         self.base_url = "%(rest_url)s/%(user)s/tunnels" % locals()
@@ -114,9 +117,9 @@ class TunnelMachine(object):
             if set(doc['DomainNames']) & self.domains:
                 kill_list.add(doc['id'])
         if kill_list:
-            print "Killing running tunnel(s) using requested domains:"
+            logger.info("Killing running tunnel(s) using requested domains:")
         for tunnel_id in kill_list:
-            print "  Shutting down tunnel: %s" % tunnel_id
+            logger.info("  Shutting down tunnel: %s" % tunnel_id)
             url = "%s/%s" % (self.base_url, tunnel_id)
             doc = self._get_delete_doc(url)
             assert doc.get('ok')  # TODO: handle error
@@ -131,8 +134,7 @@ class TunnelMachine(object):
         # TODO: handle 'id' not existing — fail
         self.id = doc['id']
         self.url = "%s/%s" % (self.base_url, self.id)
-        if self.debug:
-            print "Provisioned tunnel: %s" % self.id
+        logger.debug("Provisioned tunnel: %s" % self.id)
 
     def ready_wait(self):
         """Wait for the machine to reach the 'running' state."""
@@ -144,20 +146,18 @@ class TunnelMachine(object):
             if status == "running":
                 break
             if status != previous_status:
-                print u"Tunnel is %s .." % status
+                logger.info("Tunnel is %s .." % status)
             previous_status = status
             time.sleep(REST_POLL_WAIT)
         self.host = doc['Host']
-        print "Tunnel is running on %s!" % self.host
+        logger.info("Tunnel is running on %s!" % self.host)
 
     def shutdown(self):
         if self.is_shutdown:
             return
 
-        shutdown_msg = "Shutting down tunnel:"
-        if self.debug:
-            shutdown_msg += " %s" % self.id
-        print shutdown_msg
+        logger.info("Shutting down tunnel")
+        logger.debug("Tunnel ID: %s" % self.id)
 
         doc = self._get_delete_doc(self.url)
         assert doc.get('ok')
@@ -169,10 +169,10 @@ class TunnelMachine(object):
             if status == "terminated":
                 break
             if status != previous_status:
-                print u"Tunnel is %s .." % status
+                logger.info("Tunnel is %s .." % status)
             previous_status = status
             time.sleep(REST_POLL_WAIT)
-        print "Tunnel is shutdown!"
+        logger.info("Tunnel is shutdown!")
         self.is_shutdown = True
 
     # Let us being used with contextlib.closing
@@ -202,37 +202,35 @@ interact
 
 
 def run_reverse_ssh(options, tunnel):
-    print "Setting up reverse SSH connection .."
-    if IS_WINDOWS:
+    logger.info("Setting up reverse SSH connection ..")
+    if is_windows:
         cmd = "echo 'n' | %s" % get_plink_command(options, tunnel.host)
     else:
         cmd = 'expect -c "%s"' % get_expect_script(options, tunnel.host)
 
     with open(os.devnull) as devnull:
-        stdout = devnull
-        if options.debug:
-            print "cmd: %s" % cmd
-            stdout = None
+        stdout = devnull if not options.debug else None
+        logger.debug("running cmd: %s" % cmd)
         reverse_ssh = subprocess.Popen(cmd, shell=True, stdout=stdout)
     while reverse_ssh.poll() is None:
         time.sleep(1)
     if reverse_ssh.returncode != 0:
-        print ("SSH tunnel exited with error code %d"
-               % reverse_ssh.returncode)
+        logger.warning("SSH tunnel exited with error code %d",
+                       reverse_ssh.returncode)
     else:
-        print "SSH tunnel process exited with success code"
+        logger.info("SSH tunnel process exited with success code")
 
 
 def setup_signal_handler(tunnel):
 
     def sig_handler(signum, frame):
-        print "Received signal %d" % signum
+        logger.info("Received signal %d" % signum)
         tunnel.shutdown()
-        print "Goodbye."
+        logger.info("Exiting.")
         raise SystemExit()
 
     # TODO: remove SIGTERM when we implement tunnel leases
-    if IS_WINDOWS:
+    if is_windows:
         # TODO: What do these Windows signals mean?
         supported_signals = ["SIGABRT", "SIGBREAK", "SIGINT", "SIGTERM"]
     else:
@@ -248,16 +246,19 @@ def get_options():
     op.add_option("-k", "--api-key")
     op.add_option("-s", "--host", default="localhost",
                   help="default: %default")
-    op.add_option("-p", "--port", default="5000",
+    op.add_option("-p", "--port", default="80",
                   help="default: %default")
     op.add_option("-r", "--remote-port", default="80",
                   help="default: %default")
     op.add_option("-d", "--domain", action="append", dest="domains",
                   help="Requests for these will go through the tunnel."
                        " Example: -d example.test -d '*.example.test'")
-    op.add_option("--debug", action="store_true", default=False)
-    op.add_option("--rest-url", default="https://saucelabs.com/rest",
+
+    og = optparse.OptionGroup(op, "Tunnel debugging options")
+    og.add_option("--debug", action="store_true", default=False)
+    og.add_option("--rest-url", default="https://saucelabs.com/rest",
                   help="default: %default")
+    op.add_option_group(og)
 
     (options, args) = op.parse_args()
     for opt in ["user", "api_key", "host", "port", "domains"]:
@@ -275,18 +276,30 @@ def get_options():
     return options
 
 
+def setup_logging(logfile=None, debug=False):
+    loglevel = (logging.INFO, logging.DEBUG)[bool(debug)]
+    if logfile:
+        print "Sending messages to %s" % logfile
+        phormat = "%(asctime)s - %(name)s:%(lineno)d - %(levelname)s - %(message)s"
+        logging.basicConfig(level=loglevel, format=phormat, filename=logfile)
+    else:
+        logging.basicConfig(level=loglevel, format="%(asctime)s - %(message)s")
+
+
 def main():
     options = get_options()
+    setup_logging(debug=options.debug)
 
-    _args = (options.rest_url, options.user, options.api_key, options.domains)
-    with closing(TunnelMachine(*_args)) as tunnel:
-        setup_signal_handler(tunnel)
-        tunnel.ready_wait()
-        run_reverse_ssh(options, tunnel)
+    try:
+        with closing(TunnelMachine(
+                options.rest_url, options.user,
+                options.api_key, options.domains)) as tunnel:
+            setup_signal_handler(tunnel)
+            tunnel.ready_wait()
+            run_reverse_ssh(options, tunnel)
+    except RESTConnectionError, e:
+        logger.error(e)
 
 
 if __name__ == '__main__':
-    try:
-        main()
-    except RESTConnectionError, e:
-        print e
+    main()
