@@ -2,24 +2,25 @@
 # encoding: utf-8
 from __future__ import with_statement
 
-# TODO:
+# TODO MVP:
 #   * Handle forwarding multiple ports
+#   * Package with dependencies and licenses
+#   * Daemonizing
+#   * Developer docs for how to build Windows .exe
+#   * Basic health checks
+#     * user's network can get to host being forwarded to
+#     * user's network can get to the tunnel host
+#
+# TODO later:
 #   * Error handling and retry
-#   * Use logging with timestamps
 #   * Usage message
 #   * Cleanup output
 #     * Silence SSH output (debug mode?)
-#   * Health checks
-#     * user's network can get to host being forwarded to
-#     * SSH connection to tunnel VM is up
 #   * REST checks
 #     * Tunnel is still running (may be shutdown by something else)
 #     * Renew lease (not implemented)
-#   * Package with dependencies and licenses
-#   * Developer docs for how to build Windows .exe
 #   * Version check
 #   * Stats reporting / UserAgent
-#   * Daemonizing
 
 try:
     import json
