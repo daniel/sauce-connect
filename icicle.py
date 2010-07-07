@@ -3,6 +3,7 @@
 from __future__ import with_statement
 
 # TODO:
+#   * Handle forwarding multiple ports
 #   * Error handling and retry
 #   * Use logging with timestamps
 #   * Usage message
@@ -31,7 +32,7 @@ import os
 import subprocess
 import signal
 import httplib
-import socket  # httplib can raise socket.gaierror
+import socket
 import urllib2
 import time
 import platform
@@ -179,6 +180,15 @@ class TunnelMachine(object):
     close = shutdown
 
 
+def tcp_check(host, port):
+    with closing(socket.socket()) as sock:
+        try:
+            sock.connect((host, port))
+        except (socket.gaierror, socket.error), e:
+            return False
+        return True
+
+
 def get_plink_command(options, tunnel_host):
     options.tunnel_host = tunnel_host
     return ("plink -v -l %(user)s -pw %(api_key)s"
@@ -245,19 +255,25 @@ def get_options():
     op.add_option("-u", "--user", "--username")
     op.add_option("-k", "--api-key")
     op.add_option("-s", "--host", default="localhost",
-                  help="default: %default")
+                  help="[default: %default]")
     op.add_option("-p", "--port", default="80",
-                  help="default: %default")
-    op.add_option("-r", "--remote-port", default="80",
-                  help="default: %default")
+                  help="[default: %default]")
     op.add_option("-d", "--domain", action="append", dest="domains",
                   help="Requests for these will go through the tunnel."
                        " Example: -d example.test -d '*.example.test'")
 
-    og = optparse.OptionGroup(op, "Tunnel debugging options")
+    og = optparse.OptionGroup(op, "Advanced options")
+    og.add_option("-r", "--remote-port", default="80",
+                  help="The port your tests expect to hit when they run."
+        " By default, we use port 80, the standard webserver port."
+        " If you know for sure _all_ your tests use something like"
+        " http://site.test:8080/ then set this 8080.")
+    op.add_option_group(og)
+
+    og = optparse.OptionGroup(op, "Script debugging options")
     og.add_option("--debug", action="store_true", default=False)
     og.add_option("--rest-url", default="https://saucelabs.com/rest",
-                  help="default: %default")
+                  help="[default: %default]")
     op.add_option_group(og)
 
     (options, args) = op.parse_args()
