@@ -188,6 +188,8 @@ def tcp_check(host, port):
         try:
             sock.connect((host, port))
         except (socket.gaierror, socket.error), e:
+            logger.warning(
+                "Connection failed to %s:%s - %s", host, port, str(e))
             return False
         return True
 
