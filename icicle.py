@@ -10,6 +10,8 @@ from __future__ import with_statement
 #   * Basic health checks
 #     * user's network can get to host being forwarded to
 #     * user's network can get to the tunnel host
+#   * Stats reporting / UserAgent
+#   * Version check
 #
 # TODO later:
 #   * Error handling and retry
@@ -19,8 +21,6 @@ from __future__ import with_statement
 #   * REST checks
 #     * Tunnel is still running (may be shutdown by something else)
 #     * Renew lease (not implemented)
-#   * Version check
-#   * Stats reporting / UserAgent
 
 try:
     import json
