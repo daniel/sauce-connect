@@ -51,8 +51,8 @@ NAME = __name__
 VERSION = "dev"
 
 REST_POLL_WAIT = 3
-HEALTH_CHECK_INTERVAL = 5
-HEALTH_CHECK_FAIL = 15  # no good check after this amount of time == fail
+HEALTH_CHECK_INTERVAL = 30
+HEALTH_CHECK_FAIL = 5 * 60  # no good check after this amount of time == fail
 
 is_windows = platform.system().lower() == "windows"
 logger = logging.getLogger(NAME)
