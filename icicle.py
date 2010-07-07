@@ -26,19 +26,19 @@ from __future__ import with_statement
 #   * Close ssh-keygen process after use
 #
 
-import optparse
-import re
 import os
-import subprocess
-import signal
-import httplib
-import socket
-import urllib2
-import time
-import platform
 import sys
+import re
+import optparse
 import logging
 import logging.handlers
+import signal
+import httplib
+import urllib2
+import subprocess
+import socket
+import time
+import platform
 from contextlib import closing
 from collections import defaultdict
 
@@ -51,8 +51,8 @@ NAME = __name__
 VERSION = "dev"
 
 REST_POLL_WAIT = 3
-HEALTH_CHECK_INTERVAL = 30
-HEALTH_CHECK_FAIL = 5 * 60  # no good check after this amount of time == fail
+HEALTH_CHECK_INTERVAL = 5
+HEALTH_CHECK_FAIL = 15  # no good check after this amount of time == fail
 
 is_windows = platform.system().lower() == "windows"
 logger = logging.getLogger(NAME)
@@ -193,40 +193,40 @@ class TunnelMachine(object):
     close = shutdown
 
 
-def tcp_connected(host, port):
-    with closing(socket.socket()) as sock:
-        logger.debug("Trying TCP connection to %s:%s" % (host, port))
-        try:
-            sock.connect((host, port))
-        except (socket.gaierror, socket.error), e:
-            logger.warning(
-                "Your network can't connect to %s:%s - %s", host, port, str(e))
-            logger.warning(
-                "Your tests may be affected by poor network connectivity.")
-            return False
-        return True
+class HealthCheckFail(Exception):
+    pass
 
 
-last_tcp_connect = defaultdict(time.time)
+class HealthChecker(object):
 
-def do_health_checks(options, tunnel):
-    global last_tcp_connect
+    def __init__(self, host, ports, tunnel_host):
+        # check ports we are forwarding to
+        checklist = [(host, int(port)) for port in ports]
+        # also check tunnel host SSH port
+        checklist.append((tunnel_host, 22))
+        self.checklist = frozenset(checklist)
+        self.last_tcp_connect = defaultdict(time.time)
 
-    # check the ports we are forwarding to
-    to_check = [(options.host, int(port)) for port in options.ports]
-    # check we can get to the tunnel machine
-    to_check.append((tunnel.host, 22))
+    def _tcp_connected(self, host, port):
+        with closing(socket.socket()) as sock:
+            logger.debug("Trying TCP connection to %s:%s" % (host, port))
+            try:
+                sock.connect((host, port))
+            except (socket.gaierror, socket.error), e:
+                logger.warning("Your network can't connect to %s:%s - %s",
+                               host, port, str(e))
+                logger.warning(
+                    "Your tests may be affected by poor network connectivity.")
+                return False
+            return True
 
-    for port, host in to_check:
-        pair = (port, host)
-        if tcp_connected(*pair):
-            last_tcp_connect[pair] = time.time()
-        elif time.time() - last_tcp_connect[pair] > HEALTH_CHECK_FAIL:
-            logger.error("Could not connect to %s:%s" % pair +
-                         " for %ss" % HEALTH_CHECK_FAIL)
-            tunnel.shutdown()
-            logger.info("Exiting.")
-            raise SystemExit()
+    def check(self):
+        for pair in self.checklist:
+            if self._tcp_connected(*pair):
+                self.last_tcp_connect[pair] = time.time()
+            elif time.time() - self.last_tcp_connect[pair] > HEALTH_CHECK_FAIL:
+                raise HealthCheckFail("Could not connect to %s:%s" % pair +
+                                      " for %s seconds" % HEALTH_CHECK_FAIL)
 
 
 def _get_ssh_dash_Rs(options):
@@ -256,6 +256,12 @@ def get_expect_script(options, tunnel_host):
         "interact")
 
 
+def shutdown_and_exit(tunnel):
+    tunnel.shutdown()
+    logger.info("Exiting.")
+    raise SystemExit()
+
+
 def run_reverse_ssh(options, tunnel):
     logger.info("Starting SSH process ..")
     if is_windows:
@@ -264,17 +270,23 @@ def run_reverse_ssh(options, tunnel):
         cmd = 'expect -c "%s"' % get_expect_script(options, tunnel.host)
 
     with open(os.devnull) as devnull:
-        stdout = devnull  #if not options.debug else None
+        stdout = devnull  # if not options.debug else None
         logger.debug("running cmd: %s" % cmd)
         reverse_ssh = subprocess.Popen("exec %s" % cmd, shell=True,
                                        stdout=stdout)
 
     # ssh process is running
     announced_running = False
+    health = HealthChecker(options.host, options.ports, tunnel.host)
     start_time = int(time.time())
     while reverse_ssh.poll() is None:
         if (int(time.time()) - start_time) % HEALTH_CHECK_INTERVAL == 0:
-            do_health_checks(options, tunnel)
+            try:
+                health.check()
+            except HealthCheckFail, e:
+                logger.error(e)
+                shutdown_and_exit(tunnel)
+
         if not announced_running:
             logger.info("SSH is running. You may start your tests.")
             announced_running = True
@@ -287,13 +299,12 @@ def run_reverse_ssh(options, tunnel):
     else:
         logger.info("SSH tunnel process exited with success code")
 
+
 def setup_signal_handler(tunnel):
 
     def sig_handler(signum, frame):
         logger.info("Received signal %d" % signum)
-        tunnel.shutdown()
-        logger.info("Exiting.")
-        raise SystemExit()
+        shutdown_and_exit(tunnel)
 
     # TODO: remove SIGTERM when we implement tunnel leases
     if is_windows:
