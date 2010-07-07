@@ -3,7 +3,7 @@
 from __future__ import with_statement
 
 # TODO MVP:
-#   * Handle forwarding multiple ports
+#   * Error handling and retry
 #   * Package with dependencies and licenses
 #   * Daemonizing
 #   * Developer docs for how to build Windows .exe
@@ -12,14 +12,12 @@ from __future__ import with_statement
 #     * user's network can get to the tunnel host
 #   * Stats reporting / UserAgent
 #   * Version check
-#
-# TODO later:
-#   * Error handling and retry
-#   * Usage message
-#   * Cleanup output
-#     * Silence SSH output (debug mode?)
 #   * REST checks
 #     * Tunnel is still running (may be shutdown by something else)
+#
+# TODO later:
+#   * Usage message
+#   * REST checks
 #     * Renew lease (not implemented)
 
 try:
@@ -190,33 +188,32 @@ def tcp_check(host, port):
         return True
 
 
+def _get_ssh_dash_Rs(options):
+    dash_Rs = ""
+    for port, remote_port in zip(options.ports, options.remote_ports):
+        dash_Rs += "-R 0.0.0.0:%s:%s:%s " % (remote_port, options.host, port)
+    return dash_Rs
+
+
 def get_plink_command(options, tunnel_host):
     options.tunnel_host = tunnel_host
-    return ("plink -v -l %(user)s -pw %(api_key)s"
-            "-N -R 0.0.0.0:%(remote_port)s:%(host)s:%(port)s %(tunnel_host)s"
-            % options)
+    return ("plink -v -l %s -pw %s -N " % (options.user, options.api_key) +
+            _get_ssh_dash_Rs(options) +
+            "%s" % tunnel_host)
 
 
 def get_expect_script(options, tunnel_host):
     options.tunnel_host = tunnel_host
-    head = "set timeout -1;spawn ssh-keygen -q -R %s;" % tunnel_host
-    foot = "interact"
-    ssh = "spawn ssh -q -p 22 -l %s -N -R 0.0.0.0:%%s:%s:%%s %s;" % (
-          options.user, options.host, tunnel_host)
-    ssh_pass = "expect *password:; send -- %s\\r;" % options.api_key
-    first_connect = ('expect \\"Are you sure you want to continue connecting'
-                     ' (yes/no)?\\"; send -- yes\\r;')
+    return (
+        "set timeout -1;"
+        "spawn ssh-keygen -q -R %s;" % tunnel_host +
+        "spawn ssh -q -p 22 -l %s -N %s %s;"
+            % (options.user, _get_ssh_dash_Rs(options), tunnel_host) +
+        'expect \\"Are you sure you want to continue connecting'
+        ' (yes/no)?\\";send -- yes\\r;'
+        "expect *password:;send -- %s\\r;" % options.api_key +
+        "interact")
 
-    # handle the first SSH connection (new host key)
-    port, remote_port = options.ports[0], options.remote_ports[0]
-    script = head + ssh % (remote_port, port) + first_connect + ssh_pass
-
-    # forward the rest of the ports
-    for port, remote_port in zip(options.ports[1:], options.remote_ports[1:]):
-        script += ssh % (remote_port, port) + ssh_pass
-
-    script += foot
-    return script
 
 def run_reverse_ssh(options, tunnel):
     logger.info("Setting up reverse SSH connection ..")
@@ -301,14 +298,6 @@ def get_options():
     for opt in ["user", "api_key", "host", "domains"]:
         if not hasattr(options, opt) or not getattr(options, opt):
             op.error("Missing required argument(s)!")
-
-    # allow us to use a mapping key in string interpolations
-    def getitem(key):
-        try:
-            return getattr(options, key)
-        except AttributeError:
-            raise KeyError
-    options.__getitem__ = getitem
 
     return options
 
