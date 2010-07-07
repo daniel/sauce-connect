@@ -199,18 +199,24 @@ def get_plink_command(options, tunnel_host):
 
 def get_expect_script(options, tunnel_host):
     options.tunnel_host = tunnel_host
-    return ";".join(("""
-set timeout -1
-spawn ssh-keygen -q -R %(tunnel_host)s
-spawn ssh -q -p 22 -l %(user)s"""
-""" -N -R 0.0.0.0:%(remote_port)s:%(host)s:%(port)s %(tunnel_host)s
-expect \\"Are you sure you want to continue connecting (yes/no)?\\"
-send -- yes\\r
-expect *password:
-send -- %(api_key)s\\r
-interact
-""" % options).strip().split("\n"))
+    head = "set timeout -1;spawn ssh-keygen -q -R %s;" % tunnel_host
+    foot = "interact"
+    ssh = "spawn ssh -q -p 22 -l %s -N -R 0.0.0.0:%%s:%s:%%s %s;" % (
+          options.user, options.host, tunnel_host)
+    ssh_pass = "expect *password:; send -- %s\\r;" % options.api_key
+    first_connect = ('expect \\"Are you sure you want to continue connecting'
+                     ' (yes/no)?\\"; send -- yes\\r;')
 
+    # handle the first SSH connection (new host key)
+    port, remote_port = options.ports[0], options.remote_ports[0]
+    script = head + ssh % (remote_port, port) + first_connect + ssh_pass
+
+    # forward the rest of the ports
+    for port, remote_port in zip(options.ports[1:], options.remote_ports[1:]):
+        script += ssh % (remote_port, port) + ssh_pass
+
+    script += foot
+    return script
 
 def run_reverse_ssh(options, tunnel):
     logger.info("Setting up reverse SSH connection ..")
@@ -257,18 +263,19 @@ def get_options():
     op.add_option("-k", "--api-key")
     op.add_option("-s", "--host", default="localhost",
                   help="[default: %default]")
-    op.add_option("-p", "--port", default="80",
-                  help="[default: %default]")
+    op.add_option("-p", "--port", action="append", dest="ports", default=[],
+                  help="[default: 80]")
     op.add_option("-d", "--domain", action="append", dest="domains",
                   help="Requests for these will go through the tunnel."
                        " Example: -d example.test -d '*.example.test'")
 
     og = optparse.OptionGroup(op, "Advanced options")
-    og.add_option("-r", "--remote-port", default="80",
-                  help="The port your tests expect to hit when they run."
-        " By default, we use port 80, the standard webserver port."
-        " If you know for sure _all_ your tests use something like"
-        " http://site.test:8080/ then set this 8080.")
+    og.add_option("-r", "--remote-port",
+        action="append", dest="remote_ports", default=[],
+        help="The port your tests expect to hit when they run."
+             " By default, we use port 80, the standard webserver port."
+             " If you know for sure _all_ your tests use something like"
+             " http://site.test:8080/ then set this 8080.")
     op.add_option_group(og)
 
     og = optparse.OptionGroup(op, "Script debugging options")
@@ -278,7 +285,20 @@ def get_options():
     op.add_option_group(og)
 
     (options, args) = op.parse_args()
-    for opt in ["user", "api_key", "host", "port", "domains"]:
+
+    # manually set defaults for append types (go optparse)
+    if options.ports == []:
+        options.ports.append("80")
+    if options.remote_ports == []:
+        options.remote_ports.append("80")
+
+    if len(options.ports) != len(options.remote_ports):
+        op.error("Each port (-p) being forwarded to requires a corresponding "
+                 "remote port (-r) being forwarded from. For example: -p 5000 "
+                 "-r 80 -p 5001 -r 443")
+
+    # check for required options without defaults
+    for opt in ["user", "api_key", "host", "domains"]:
         if not hasattr(options, opt) or not getattr(options, opt):
             op.error("Missing required argument(s)!")
 
