@@ -6,7 +6,6 @@ from __future__ import with_statement
 #   * Error handling and retry
 #   * Package with dependencies and licenses
 #   * Developer docs for how to build Windows .exe
-#   * Version check
 #
 # TODO minimum - problematic:
 #   * Daemonizing
@@ -48,8 +47,9 @@ except ImportError:
     import simplejson as json  # Python 2.5 dependency
 
 NAME = __name__
-VERSION = "dev"
-
+VERSION = 0
+VERSIONS_URL = "http://saucelabs.com/versions.json"
+DOWNLOAD_URL = "???"
 REST_POLL_WAIT = 3
 HEALTH_CHECK_INTERVAL = 30
 HEALTH_CHECK_FAIL = 5 * 60  # no good check after this amount of time == fail
@@ -165,7 +165,7 @@ class TunnelMachine(object):
             previous_status = status
             time.sleep(REST_POLL_WAIT)
         self.host = doc['Host']
-        logger.info("Tunnel is running on %s!" % self.host)
+        logger.info("Tunnel is running on %s" % self.host)
 
     def shutdown(self):
         if self.is_shutdown:
@@ -259,7 +259,7 @@ def get_expect_script(options, tunnel_host):
 
 def shutdown_and_exit(tunnel):
     tunnel.shutdown()
-    logger.info("Exiting.")
+    logger.info("\ Exiting /")
     raise SystemExit()
 
 
@@ -290,14 +290,14 @@ def run_reverse_ssh(options, tunnel):
         if not announced_running:
             logger.info("SSH is running. You may start your tests.")
             announced_running = True
-        time.sleep(1)
+        time.sleep(1.5)
 
     # ssh process has exited
     if reverse_ssh.returncode != 0:
-        logger.warning("SSH tunnel exited with error code %d",
+        logger.warning("SSH process exited with error code %d",
                        reverse_ssh.returncode)
     else:
-        logger.info("SSH tunnel process exited with success code")
+        logger.info("SSH process exited")
 
 
 def setup_signal_handler(tunnel):
@@ -314,6 +314,49 @@ def setup_signal_handler(tunnel):
         supported_signals = ["SIGHUP", "SIGINT", "SIGQUIT", "SIGTERM"]
     for sig in supported_signals:
         signal.signal(getattr(signal, sig), sig_handler)
+
+
+def check_version():
+    failed_msg = "Skipping version check"
+    logger.debug("Checking version")
+    try:
+        with closing(urllib2.urlopen(VERSIONS_URL)) as resp:
+            assert resp.msg == "OK", "Got HTTP response %s" % resp.msg
+            version_doc = json.loads(resp.read())
+    except (urllib2.URLError, AssertionError), e:
+        logger.debug("Could not check version: %s", str(e))
+        logger.info(failed_msg)
+        return
+    try:
+        latest = version_doc[u'Sauce Tunnel'][u'version']
+    except KeyError, e:
+        logger.debug("Bad version doc, missing key: %s", str(e))
+        logger.info(failed_msg)
+        return
+
+    if VERSION < latest:
+        logger.warning("** Please update Sauce Tunnel: %s" % DOWNLOAD_URL)
+    return latest
+
+
+def setup_logging(logfile=None, quiet=False, debug=False):
+    logger.setLevel(logging.DEBUG)
+
+    if not quiet:
+        stdout = logging.StreamHandler(sys.stdout)
+        stdout.setLevel(logging.INFO)
+        stdout.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
+        logger.addHandler(stdout)
+
+    if logfile:
+        if debug and not quiet:
+            print "Debug messages will be sent to %s" % logfile
+        fileout = logging.handlers.RotatingFileHandler(
+            filename=logfile, maxBytes=256 * 1024 ** 2, backupCount=8)
+        fileout.setLevel((logging.INFO, logging.DEBUG)[bool(debug)])
+        fileout.setFormatter(logging.Formatter(
+            "%(asctime)s - %(name)s:%(lineno)d - %(levelname)s - %(message)s"))
+        logger.addHandler(fileout)
 
 
 def get_options():
@@ -381,32 +424,13 @@ def get_options():
     return options
 
 
-def setup_logging(logfile=None, quiet=False, debug=False):
-    logger.setLevel(logging.DEBUG)
-
-    if not quiet:
-        stdout = logging.StreamHandler(sys.stdout)
-        stdout.setLevel(logging.INFO)
-        stdout.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
-        logger.addHandler(stdout)
-
-    if logfile:
-        if debug and not quiet:
-            print "Debug messages will be sent to %s" % logfile
-        fileout = logging.handlers.RotatingFileHandler(
-            filename=logfile, maxBytes=256 * 1024 ** 2, backupCount=8)
-        fileout.setLevel((logging.INFO, logging.DEBUG)[bool(debug)])
-        fileout.setFormatter(logging.Formatter(
-            "%(asctime)s - %(name)s:%(lineno)d - %(levelname)s - %(message)s"))
-        logger.addHandler(fileout)
-
-
 def main():
     os.umask(0077)
     options = get_options()
     setup_logging(options.logfile, options.quiet, options.debug)
-    logger.info("Starting.")
 
+    logger.info("/ Starting \\")
+    check_version()
     try:
         with closing(TunnelMachine(
                 options.rest_url, options.user,
@@ -416,7 +440,7 @@ def main():
             run_reverse_ssh(options, tunnel)
     except RESTConnectionError, e:
         logger.error(e)
-    logger.info("Exiting.")
+    logger.info("\\ Exiting /")
 
 
 if __name__ == '__main__':
