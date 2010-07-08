@@ -131,9 +131,10 @@ class TunnelMachine(object):
             if set(doc['DomainNames']) & self.domains:
                 kill_list.add(doc['id'])
         if kill_list:
-            logger.info("Killing running tunnel(s) using requested domains:")
+            logger.info(
+                "Shutting down running tunnel(s) using requested domains")
         for tunnel_id in kill_list:
-            logger.info("  Shutting down tunnel: %s" % tunnel_id)
+            logger.debug("Shutting down old tunnel: %s" % tunnel_id)
             url = "%s/%s" % (self.base_url, tunnel_id)
             doc = self._get_delete_doc(url)
             assert doc.get('ok')  # TODO: handle error
@@ -238,7 +239,7 @@ def _get_ssh_dash_Rs(options):
 
 def get_plink_command(options, tunnel_host):
     options.tunnel_host = tunnel_host
-    return ("plink -v -l %s -pw %s -N " % (options.user, options.api_key) +
+    return ("plink -l %s -pw %s -N " % (options.user, options.api_key) +
             _get_ssh_dash_Rs(options) +
             "%s" % tunnel_host)
 
@@ -272,8 +273,7 @@ def run_reverse_ssh(options, tunnel):
     with open(os.devnull) as devnull:
         stdout = devnull  # if not options.debug else None
         logger.debug("running cmd: %s" % cmd)
-        reverse_ssh = subprocess.Popen("exec %s" % cmd, shell=True,
-                                       stdout=stdout)
+        reverse_ssh = subprocess.Popen(cmd, shell=True, stdout=stdout)
 
     # ssh process is running
     announced_running = False
