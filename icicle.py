@@ -6,6 +6,7 @@ from __future__ import with_statement
 #   * Error handling and retry
 #   * Package with dependencies and licenses
 #   * Developer docs for how to build Windows .exe
+#   * Fix scary Windows plink.exe coming after useful log messages
 #
 # TODO minimum - problematic:
 #   * Daemonizing
@@ -22,7 +23,7 @@ from __future__ import with_statement
 #     * Renew lease (not implemented)
 #
 # TODO much later:
-#   * Close ssh-keygen process after use
+#   * unix: Close ssh-keygen process after use
 #
 
 import os
@@ -38,6 +39,7 @@ import subprocess
 import socket
 import time
 import platform
+import tempfile
 from contextlib import closing
 from collections import defaultdict
 
@@ -50,6 +52,7 @@ NAME = __name__
 VERSION = 0
 VERSIONS_URL = "http://saucelabs.com/versions.json"
 DOWNLOAD_URL = "???"
+
 REST_POLL_WAIT = 3
 HEALTH_CHECK_INTERVAL = 30
 HEALTH_CHECK_FAIL = 5 * 60  # no good check after this amount of time == fail
@@ -63,19 +66,24 @@ class RESTConnectionError(Exception):
     def __init__(self, e):
         self.e = e
 
-    def __repr__(self):
-        return "Failed to connect to REST interface: %s" % str(self.e)
-
     def __str__(self):
-        return repr(self)
+        return "Failed to contact Sauce Labs REST API (%s)" % str(self.e)
+
+
+class TunnelMachineError(Exception):
+    pass
 
 
 class TunnelMachine(object):
+
+    REST_RETRY_WAIT = 5
+    REST_RETRY_MAX = 6
 
     _host_search = re.compile("//([^/]+)").search
 
     def __init__(self, rest_url, user, password, domains):
         self.user = user
+        self.password = password
         self.domains = set(domains)
 
         self.is_shutdown = False
@@ -85,7 +93,18 @@ class TunnelMachine(object):
                                  ("%s:%s" % (user, password)).encode("base64")}
 
         self._set_urlopen(rest_url, user, password)
-        self._start_tunnel()
+
+        for attempt in xrange(1, self.REST_RETRY_MAX + 1):
+            try:
+                self._start_tunnel()
+                break
+            except RESTConnectionError, e:
+                logger.error(e)
+                if attempt == self.REST_RETRY_MAX:
+                    raise TunnelMachineError("Failed to start tunnel machine "
+                                             "after %d tries" % attempt)
+                logger.info("Retrying in %ds", self.REST_RETRY_WAIT)
+                time.sleep(self.REST_RETRY_WAIT)
 
     def _set_urlopen(self, url, user, password):
         # make http auth support Just Work for GET/POST
@@ -132,7 +151,7 @@ class TunnelMachine(object):
                 kill_list.add(doc['id'])
         if kill_list:
             logger.info(
-                "Shutting down running tunnel(s) using requested domains")
+                "Shutting down other tunnels using requested domains")
         for tunnel_id in kill_list:
             logger.debug("Shutting down old tunnel: %s" % tunnel_id)
             url = "%s/%s" % (self.base_url, tunnel_id)
@@ -171,7 +190,7 @@ class TunnelMachine(object):
         if self.is_shutdown:
             return
 
-        logger.info("Shutting down tunnel")
+        logger.info("Shutting down tunnel (please wait)")
         logger.debug("Tunnel ID: %s" % self.id)
 
         doc = self._get_delete_doc(self.url)
@@ -187,7 +206,7 @@ class TunnelMachine(object):
                 logger.info("Tunnel is %s .." % status)
             previous_status = status
             time.sleep(REST_POLL_WAIT)
-        logger.info("Tunnel is shutdown!")
+        logger.info("Tunnel is shutdown")
         self.is_shutdown = True
 
     # Make us usable with contextlib.closing
@@ -200,104 +219,138 @@ class HealthCheckFail(Exception):
 
 class HealthChecker(object):
 
-    def __init__(self, host, ports, tunnel_host):
-        # check ports we are forwarding to
-        checklist = [(host, int(port)) for port in ports]
-        # also check tunnel host SSH port
-        checklist.append((tunnel_host, 22))
-        self.checklist = frozenset(checklist)
+    def __init__(self, host, ports, fail_msg=None):
+        """fail_msg can include '%(host)s' and '%(port)d'"""
+        self.host = host
+        self.fail_msg = fail_msg
+        if not self.fail_msg:
+            self.fail_msg = ("!! Your tests will fail while your network "
+                             "can not get to %(host)s:%(port)d.")
+        self.ports = frozenset(int(p) for p in ports)
         self.last_tcp_connect = defaultdict(time.time)
 
-    def _tcp_connected(self, host, port):
+    def _tcp_connected(self, port):
         with closing(socket.socket()) as sock:
-            logger.debug("Trying TCP connection to %s:%s" % (host, port))
+            logger.debug("Trying TCP connection to %s:%s" % (self.host, port))
             try:
-                sock.connect((host, port))
+                sock.connect((self.host, port))
+                return True
             except (socket.gaierror, socket.error), e:
-                logger.warning("Your network can't connect to %s:%s - %s",
-                               host, port, str(e))
-                logger.warning(
-                    "Your tests may be affected by poor network connectivity.")
+                logger.warning("Could not connect to %s:%s (%s)",
+                               self.host, port, str(e))
                 return False
-            return True
 
     def check(self):
-        for pair in self.checklist:
-            if self._tcp_connected(*pair):
-                self.last_tcp_connect[pair] = time.time()
-            elif time.time() - self.last_tcp_connect[pair] > HEALTH_CHECK_FAIL:
-                raise HealthCheckFail("Could not connect to %s:%s" % pair +
-                                      " for %s seconds" % HEALTH_CHECK_FAIL)
+        for port in self.ports:
+            if self._tcp_connected(port):
+                self.last_tcp_connect[port] = time.time()
+                continue
+            # TCP connection failed
+            logger.warning(self.fail_msg % dict(host=self.host, port=port))
+            if time.time() - self.last_tcp_connect[port] > HEALTH_CHECK_FAIL:
+                raise HealthCheckFail(
+                    "Could not connect to %s:%s for %s seconds"
+                    % (self.host, port, HEALTH_CHECK_FAIL))
 
 
-def _get_ssh_dash_Rs(options):
-    dash_Rs = ""
-    for port, remote_port in zip(options.ports, options.remote_ports):
-        dash_Rs += "-R 0.0.0.0:%s:%s:%s " % (remote_port, options.host, port)
-    return dash_Rs
+class ReverseSSHError(Exception):
+    pass
 
 
-def get_plink_command(options, tunnel_host):
-    options.tunnel_host = tunnel_host
-    return ("plink -l %s -pw %s -N " % (options.user, options.api_key) +
-            _get_ssh_dash_Rs(options) +
-            "%s" % tunnel_host)
+class ReverseSSH(object):
 
+    RETRY_SSH_MAX = 3
 
-def get_expect_script(options, tunnel_host):
-    options.tunnel_host = tunnel_host
-    return (
-        "set timeout -1;"
-        "spawn ssh-keygen -q -R %s;" % tunnel_host +
-        "spawn ssh -q -p 22 -l %s -N %s %s;"
-            % (options.user, _get_ssh_dash_Rs(options), tunnel_host) +
-        'expect \\"Are you sure you want to continue connecting'
-        ' (yes/no)?\\";send -- yes\\r;'
-        "expect *password:;send -- %s\\r;" % options.api_key +
-        "interact")
+    def __init__(self, tunnel, host, ports, tunnel_ports):
+        self.tunnel = tunnel
+        self.host = host
+        self.ports = ports
+        self.tunnel_ports = tunnel_ports
+
+    @property
+    def _dash_Rs(self):
+        dash_Rs = ""
+        for port, tunnel_port in zip(self.ports, self.tunnel_ports):
+            dash_Rs += "-R 0.0.0.0:%s:%s:%s " % (tunnel_port, self.host, port)
+        return dash_Rs
+
+    def get_plink_command(self):
+        return ("plink -l %s -pw %s -N %s %s"
+                % (self.tunnel.user, self.tunnel.password,
+                   self._dash_Rs, self.tunnel.host))
+
+    def get_expect_script(self):
+        return (
+            "set timeout -1;"
+            "spawn ssh-keygen -q -R %s;" % self.tunnel.host +
+            "spawn ssh -q -p 22 -l %s -N %s %s;"
+                % (self.tunnel.user, self._dash_Rs, self.tunnel.host) +
+            'expect \\"Are you sure you want to continue connecting'
+            ' (yes/no)?\\";send -- yes\\r;'
+            "expect *password:;send -- %s\\r;" % self.tunnel.password +
+            "interact")
+
+    def _start_reverse_ssh(self):
+        logger.info("Starting SSH process ..")
+        if is_windows:
+            cmd = "echo 'n' | %s" % self.get_plink_command()
+        else:
+            cmd = 'expect -c "%s"' % self.get_expect_script()
+
+        # start ssh process
+        devnull = open(os.devnull)
+        stderr_tmp = tempfile.TemporaryFile()
+        logger.debug("running cmd: %s" % cmd)
+        reverse_ssh = subprocess.Popen(
+            cmd, shell=True, stdout=devnull, stderr=stderr_tmp)
+
+        # ssh process is running
+        announced_running = False
+        forwarded_health = HealthChecker(self.host, self.ports)
+        tunnel_health = HealthChecker(host=self.tunnel.host, ports=[22],
+                fail_msg="!! Your tests may fail because your network"
+                         " can not get to the tunnel host.")
+        start_time = int(time.time())
+        while reverse_ssh.poll() is None:
+            now = int(time.time())
+            if (now - start_time) % HEALTH_CHECK_INTERVAL == 0:
+                try:
+                    forwarded_health.check()
+                    tunnel_health.check()
+                except HealthCheckFail, e:
+                    raise ReverseSSHError(e)
+            if not announced_running:
+                logger.info("SSH is running. You may start your tests.")
+                announced_running = True
+            time.sleep(1)
+
+        # ssh process has exited
+        devnull.close()
+        stderr_tmp.seek(0)
+        reverse_ssh_stderr = stderr_tmp.read()
+        stderr_tmp.close()
+        if reverse_ssh.returncode != 0:
+            logger.warning("SSH process exited with error code %d",
+                           reverse_ssh.returncode)
+        else:
+            logger.info("SSH process exited")
+        if reverse_ssh_stderr:
+            logger.warning("SSH stderr was: '%s'" % reverse_ssh_stderr)
+
+        return reverse_ssh.returncode
+
+    def run(self):
+        for attempt in xrange(1, self.RETRY_SSH_MAX + 1):
+            # if clean exit, then bail (e.g., process receives SIGINT)
+            if self._start_reverse_ssh() == 0:
+                return
+        raise ReverseSSHError("SSH process errored %d times" % attempt)
 
 
 def shutdown_and_exit(tunnel):
     tunnel.shutdown()
     logger.info("\ Exiting /")
     raise SystemExit()
-
-
-def run_reverse_ssh(options, tunnel):
-    logger.info("Starting SSH process ..")
-    if is_windows:
-        cmd = "echo 'n' | %s" % get_plink_command(options, tunnel.host)
-    else:
-        cmd = 'expect -c "%s"' % get_expect_script(options, tunnel.host)
-
-    with open(os.devnull) as devnull:
-        stdout = devnull  # if not options.debug else None
-        logger.debug("running cmd: %s" % cmd)
-        reverse_ssh = subprocess.Popen(cmd, shell=True, stdout=stdout)
-
-    # ssh process is running
-    announced_running = False
-    health = HealthChecker(options.host, options.ports, tunnel.host)
-    start_time = int(time.time())
-    while reverse_ssh.poll() is None:
-        if (int(time.time()) - start_time) % HEALTH_CHECK_INTERVAL == 0:
-            try:
-                health.check()
-            except HealthCheckFail, e:
-                logger.error(e)
-                shutdown_and_exit(tunnel)
-
-        if not announced_running:
-            logger.info("SSH is running. You may start your tests.")
-            announced_running = True
-        time.sleep(1.5)
-
-    # ssh process has exited
-    if reverse_ssh.returncode != 0:
-        logger.warning("SSH process exited with error code %d",
-                       reverse_ssh.returncode)
-    else:
-        logger.info("SSH process exited")
 
 
 def setup_signal_handler(tunnel):
@@ -361,8 +414,8 @@ def setup_logging(logfile=None, quiet=False, debug=False):
 
 def get_options():
     # defaults we need to set outside of optparse
-    port = "80"
-    remote_port = "80"
+    def_port = "80"
+    def_tunnel_port = "80"
     #logfile = "%s.log" % NAME
 
     op = optparse.OptionParser()
@@ -371,7 +424,7 @@ def get_options():
     op.add_option("-s", "--host", default="localhost",
                   help="[default: %default]")
     op.add_option("-p", "--port", action="append", dest="ports", default=[],
-                  help="[default: %s]" % port)
+                  help="[default: %s]" % def_port)
     op.add_option("-d", "--domain", action="append", dest="domains",
                   help="Requests for these will go through the tunnel."
                        " Example: -d example.test -d '*.example.test'")
@@ -381,12 +434,12 @@ def get_options():
     #op.add_option("--daemonize", action="store_true", default=False)
 
     og = optparse.OptionGroup(op, "Advanced options")
-    og.add_option("-r", "--remote-port",
-        action="append", dest="remote_ports", default=[],
+    og.add_option("-r", "--tunnel-port",
+        action="append", dest="tunnel_ports", default=[],
         help="The port your tests expect to hit when they run."
              " By default, we use port %s, the standard webserver port."
              " If you know for sure _all_ your tests use something like"
-             " http://site.test:8080/ then set this 8080." % remote_port)
+             " http://site.test:8080/ then set this 8080." % def_tunnel_port)
     #og.add_option("--pidfile", default="%s.pid" % NAME,
     #      help="Name of the pidfile to drop when the --daemonize option is"
     #           "used. [default: %default]")
@@ -405,13 +458,13 @@ def get_options():
 
     # manually set these defaults
     if options.ports == []:
-        options.ports.append(port)
-    if options.remote_ports == []:
-        options.remote_ports.append(remote_port)
+        options.ports.append(def_port)
+    if options.tunnel_ports == []:
+        options.tunnel_ports.append(def_tunnel_port)
     #if options.daemonize:
     #    options.logfile = options.logfile or logfile
 
-    if len(options.ports) != len(options.remote_ports):
+    if len(options.ports) != len(options.tunnel_ports):
         op.error("Each port (-p) being forwarded to requires a corresponding "
                  "remote port (-r) being forwarded from. For example: -p 5000 "
                  "-r 80 -p 5001 -r 443")
@@ -431,16 +484,29 @@ def main():
 
     logger.info("/ Starting \\")
     check_version()
+
+    # Initial check of forwarded ports
+    fail_msg = ("!! Are you sure your web server is on host '%(host)s' "
+                "listening on port %(port)d? Your tests will fail while the "
+                "server is unavailable.")
+    HealthChecker(options.host, options.ports, fail_msg=fail_msg).check()
+
     try:
-        with closing(TunnelMachine(
-                options.rest_url, options.user,
-                options.api_key, options.domains)) as tunnel:
-            setup_signal_handler(tunnel)
-            tunnel.ready_wait()
-            run_reverse_ssh(options, tunnel)
-    except RESTConnectionError, e:
+        tunnel = TunnelMachine(options.rest_url, options.user,
+                               options.api_key, options.domains)
+        setup_signal_handler(tunnel)
+        tunnel.ready_wait()
+    except TunnelMachineError, e:
         logger.error(e)
-    logger.info("\\ Exiting /")
+        logger.info("\\ Exiting /")
+        raise SystemExit()
+
+    ssh = ReverseSSH(tunnel, options.host, options.ports, options.tunnel_ports)
+    try:
+        ssh.run()
+    except ReverseSSHError, e:
+        logger.error(e)
+    shutdown_and_exit(tunnel)
 
 
 if __name__ == '__main__':
