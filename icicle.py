@@ -3,27 +3,19 @@
 from __future__ import with_statement
 
 # TODO minimum:
-#   * Error handling and retry
+#   * Stats reporting via REST
+#   * Fix scary Windows plink.exe output
 #   * Package with dependencies and licenses
 #   * Developer docs for how to build Windows .exe
-#   * Fix scary Windows plink.exe coming after useful log messages
 #
-# TODO minimum - problematic:
-#   * Daemonizing
-#     * os.fork() not on Windows
-#     * can't send file descriptors to null or Expect script fails
-#   * Stats reporting via REST
-#     * reporting via the REST interface requires backend work to provide an
-#       updateable field; backoff to UserAgent instead?
-#
-# TODO later:
-#   * Usage message
+# TODO:
+#   * Usage message with examples
 #   * REST checks
 #     * Tunnel is still running (may be shutdown by something else)
-#     * Renew lease (not implemented)
-#
-# TODO much later:
-#   * unix: Close ssh-keygen process after use
+#     * Renew lease (backend not implemented)
+#   * Daemonizing
+#     * issue: os.fork() not on Windows
+#     * issue: can't send file descriptors to null or Expect script fails
 #
 
 import os
@@ -40,8 +32,9 @@ import socket
 import time
 import platform
 import tempfile
-from contextlib import closing
 from collections import defaultdict
+from contextlib import closing
+from functools import wraps
 
 try:
     import json
@@ -53,21 +46,15 @@ VERSION = 0
 VERSIONS_URL = "http://saucelabs.com/versions.json"
 DOWNLOAD_URL = "???"
 
+RETRY_REST_WAIT = 5
+RETRY_REST_MAX = 6
 REST_POLL_WAIT = 3
+RETRY_SSH_MAX = 3
 HEALTH_CHECK_INTERVAL = 30
 HEALTH_CHECK_FAIL = 5 * 60  # no good check after this amount of time == fail
 
 is_windows = platform.system().lower() == "windows"
 logger = logging.getLogger(NAME)
-
-
-class RESTConnectionError(Exception):
-
-    def __init__(self, e):
-        self.e = e
-
-    def __str__(self):
-        return "Failed to contact Sauce Labs REST API (%s)" % str(self.e)
 
 
 class TunnelMachineError(Exception):
@@ -76,10 +63,26 @@ class TunnelMachineError(Exception):
 
 class TunnelMachine(object):
 
-    REST_RETRY_WAIT = 5
-    REST_RETRY_MAX = 6
-
     _host_search = re.compile("//([^/]+)").search
+
+    # decorator
+    def _retry_rest_api(f):
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            for attempt in xrange(1, RETRY_REST_MAX + 1):
+                try:
+                    return f(*args, **kwargs)
+                except (urllib2.URLError, socket.gaierror, socket.error), e:
+                    logger.warning("Problem connecting to Sauce Labs REST API "
+                                   "(%s)", str(e))
+                    if attempt == RETRY_REST_MAX:
+                        raise TunnelMachineError(
+                            "Could not reach Sauce Labs REST API after %d "
+                            "tries. Is your network down or firewalled?"
+                            % attempt)
+                    logger.info("Retrying in %ds", RETRY_REST_WAIT)
+                    time.sleep(RETRY_REST_WAIT)
+        return wrapper
 
     def __init__(self, rest_url, user, password, domains):
         self.user = user
@@ -93,18 +96,7 @@ class TunnelMachine(object):
                                  ("%s:%s" % (user, password)).encode("base64")}
 
         self._set_urlopen(rest_url, user, password)
-
-        for attempt in xrange(1, self.REST_RETRY_MAX + 1):
-            try:
-                self._start_tunnel()
-                break
-            except RESTConnectionError, e:
-                logger.error(e)
-                if attempt == self.REST_RETRY_MAX:
-                    raise TunnelMachineError("Failed to start tunnel machine "
-                                             "after %d tries" % attempt)
-                logger.info("Retrying in %ds", self.REST_RETRY_WAIT)
-                time.sleep(self.REST_RETRY_WAIT)
+        self._start_tunnel()
 
     def _set_urlopen(self, url, user, password):
         # make http auth support Just Work for GET/POST
@@ -115,15 +107,14 @@ class TunnelMachine(object):
         opener = urllib2.build_opener(auth_handler)
         self.urlopen = opener.open
 
+    @_retry_rest_api
     def _get_doc(self, url_or_req):
-        try:
-            with closing(self.urlopen(url_or_req)) as resp:
-                # TODO: handle this error
-                assert resp.msg == "OK"
-                return json.loads(resp.read())
-        except urllib2.URLError, e:
-            raise RESTConnectionError(e)
+        with closing(self.urlopen(url_or_req)) as resp:
+            # TODO: handle this error
+            assert resp.msg == "OK"
+            return json.loads(resp.read())
 
+    @_retry_rest_api
     def _get_delete_doc(self, url):
         # urllib2 doesn support the DELETE method (lame), so we build our own
         if self.base_url.startswith("https"):
@@ -131,12 +122,8 @@ class TunnelMachine(object):
         else:
             make_conn = httplib.HTTPConnection
         with closing(make_conn(self.rest_host)) as conn:
-            try:
-                conn.request(
-                    method="DELETE", url=url, headers=self.basic_auth_header)
-            except (socket.gaierror, socket.error), e:
-                raise RESTConnectionError(e)
-
+            conn.request(method="DELETE", url=url,
+                         headers=self.basic_auth_header)
             # TODO: check HTTP OK
             resp = conn.getresponse()
             return json.loads(resp.read())
@@ -259,8 +246,6 @@ class ReverseSSHError(Exception):
 
 class ReverseSSH(object):
 
-    RETRY_SSH_MAX = 3
-
     def __init__(self, tunnel, host, ports, tunnel_ports):
         self.tunnel = tunnel
         self.host = host
@@ -288,7 +273,7 @@ class ReverseSSH(object):
             'expect \\"Are you sure you want to continue connecting'
             ' (yes/no)?\\";send -- yes\\r;'
             "expect *password:;send -- %s\\r;" % self.tunnel.password +
-            "interact")
+            "wait")
 
     def _start_reverse_ssh(self):
         logger.info("Starting SSH process ..")
@@ -303,6 +288,7 @@ class ReverseSSH(object):
         logger.debug("running cmd: %s" % cmd)
         reverse_ssh = subprocess.Popen(
             cmd, shell=True, stdout=devnull, stderr=stderr_tmp)
+        time.sleep(3)  # hack: some startup time
 
         # ssh process is running
         announced_running = False
@@ -340,7 +326,7 @@ class ReverseSSH(object):
         return reverse_ssh.returncode
 
     def run(self):
-        for attempt in xrange(1, self.RETRY_SSH_MAX + 1):
+        for attempt in xrange(1, RETRY_SSH_MAX + 1):
             # if clean exit, then bail (e.g., process receives SIGINT)
             if self._start_reverse_ssh() == 0:
                 return
@@ -486,9 +472,9 @@ def main():
     check_version()
 
     # Initial check of forwarded ports
-    fail_msg = ("!! Are you sure your web server is on host '%(host)s' "
-                "listening on port %(port)d? Your tests will fail while the "
-                "server is unavailable.")
+    fail_msg = ("!! Are you sure this machine can get to your web server on "
+                "host '%(host)s' listening on port %(port)d? Your tests will "
+                "fail while the server is unreachable.")
     HealthChecker(options.host, options.ports, fail_msg=fail_msg).check()
 
     try:
