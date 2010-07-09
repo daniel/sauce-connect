@@ -553,7 +553,6 @@ def _run(options):
     logger.info("Forwarding: %s:%s -> %s:%s",
                 options.domains, options.tunnel_ports,
                 options.host, options.ports)
-    raise SystemExit()
     check_version()
 
     # Initial check of forwarded ports
