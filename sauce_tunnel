@@ -38,8 +38,8 @@ try:
 except ImportError:
     import simplejson as json  # Python 2.5 dependency
 
-NAME = __name__
-VERSION = 0
+NAME = "sauce_tunnel"
+VERSION = 1
 VERSIONS_URL = "http://saucelabs.com/versions.json"
 DOWNLOAD_URL = "http://saucelabs.com/"  # TODO: more specific URL
 
@@ -447,7 +447,7 @@ def setup_logging(logfile=None, quiet=False, debug=False):
         if debug and not quiet:
             print "* Debug messages will be sent to %s" % logfile
         fileout = logging.handlers.RotatingFileHandler(
-            filename=logfile, maxBytes=128 * 1024 ** 2, backupCount=8)
+            filename=logfile, maxBytes=128 * 1024, backupCount=8)
         fileout.setLevel((logging.INFO, logging.DEBUG)[bool(debug)])
         fileout.setFormatter(logging.Formatter(
             "%(asctime)s - %(name)s:%(lineno)d - %(levelname)s - %(message)s"))
@@ -455,78 +455,94 @@ def setup_logging(logfile=None, quiet=False, debug=False):
 
 
 def get_options():
-    usage = """Usage: %prog -u <user> -k <api_key> -s <webserver> -d <domain>
+    usage = """
+Usage: %prog -u <user> -k <api_key> -s <webserver> -d <domain> [optionals]
 
 Examples:
   Have tests for example.com go to a staging server on your intranet:
-    %prog -u testuser -k 123-abc -s staging.local -d example.com
-
-  Have tests for example.com go to your local machine on port 5000:
-    %prog -u testuser -k 123-abc -s localhost -p 5000 -d example.com
+    %prog -u sauceuser -k 123-abc -s staging.local -d example.com
 
   Have HTTP and HTTPS traffic for *.example.com go to the staging server:
-    %prog -u testuser -k 123-abc -s staging.local \\
-                 -d example.com -d *.example.com \\
-                 -p 80 -r 80 -p 443 -r 443"""
+    %prog -u sauceuser -k 123-abc -s staging.local -p 80 -p 443 \\
+                 -d example.com -d *.example.com
 
-    op = optparse.OptionParser(usage=usage)
-    op.add_option("-u", "--user", "--username")
+  Have tests for example.com go to your local machine on port 5000:
+    %prog -u sauceuser -k 123-abc -s 127.0.0.1 -t 80 -p 5000 -d example.com
+
+Performance tip:
+  It is highly recommended you run this script on the same machine as your
+  test server (i.e., you would use "-s 127.0.0.1" or "-s localhost"). Using
+  a remote server introduces higher latency (slower web requests) and is
+  another failure point.""".strip()
+
+    version = "%%prog version %s" % VERSION
+    logfile = "%s.log" % NAME
+
+    op = optparse.OptionParser(usage=usage, version=version)
+    op.add_option("-u", "--user", "--username",
+                  help="Your Sauce Labs account name.")
     op.add_option("-k", "--api-key",
-                  help="On your account page: https://saucelabs.com/account")
+                  help="On your account at https://saucelabs.com/account")
     op.add_option("-s", "--host", default="localhost",
-                  help="[default: %default]")
-    op.add_option("-p", "--port", action="append", dest="ports", default=[],
-                  help="[default: 80]")
+                  help="Host to forward requests to. [%default]")
+    op.add_option("-p", "--port", metavar="PORT",
+                  action="append", dest="ports", default=[],
+                  help="Forward to this port on HOST. Can be specified "
+                       "multiple times. [80]")
     op.add_option("-d", "--domain", action="append", dest="domains",
-                  help="Requests for these will go through the tunnel."
-                       " Example: -d example.test -d '*.example.test'")
-    op.add_option("-q", "--quiet", "-l", "--log",
-                  action="store_true", default=False,
-                  help="Sends output to a logfile instead of stdout.")
+            help="Repeat for each domain you want to forward requests for. "
+                 "Example: -d example.test -d '*.example.test'")
+    op.add_option("-q", "--quiet", action="store_true", default=False,
+                  help="Minimize standard output (see %s)" % logfile)
 
     og = optparse.OptionGroup(op, "Advanced options")
-    og.add_option("-r", "--tunnel-port",
+    og.add_option("-t", "--tunnel-port", metavar="TUNNEL_PORT",
         action="append", dest="tunnel_ports", default=[],
-        help="The ports your tests expect to hit when they run."
-             " By default, we use port 80, the standard webserver port."
+        help="The port your tests expect to hit when they run."
+             " By default, we use the same ports as the HOST."
              " If you know for sure _all_ your tests use something like"
              " http://site.test:8080/ then set this 8080.")
-    og.add_option("--logfile", default="%s.log" % NAME,
-          help="Name of the logfile to write to. [default: %default]")
+    og.add_option("--logfile", default=logfile,
+          help="Name of the logfile to write to. [%default]")
     op.add_option_group(og)
 
     og = optparse.OptionGroup(op, "Script debugging options")
     og.add_option("--debug", action="store_true", default=False,
                   help="Spews extra info into ")
     og.add_option("--rest-url", default="https://saucelabs.com/rest",
-                  help="[default: %default]")
+                  help="[%default]")
     op.add_option_group(og)
 
     (options, args) = op.parse_args()
 
-    # manually set these defaults
-    if options.ports == [] and options.tunnel_ports == []:
+    # default to 80 and default to matching host ports with tunnel ports
+    if not options.ports and not options.tunnel_ports:
         options.ports = ["80"]
-        options.tunnel_ports = ["80"]
+    if options.ports and not options.tunnel_ports:
+        options.tunnel_ports = options.ports[:]
 
     if len(options.ports) != len(options.tunnel_ports):
-        op.error("Each port (-p) being forwarded to requires a corresponding "
-                 "remote port (-r) being forwarded from. For example: -p 5000 "
-                 "-r 80 -p 5001 -r 443")
+        sys.stderr.write("Error: Options -t and -p need to be paired\n\n")
+        print "Help with options -t and -p:"
+        print "  When forwarding multiple ports, you must pair the tunnel port"
+        print "  to forward with the host port to forward to."
+        print ""
+        print "Example option usage:"
+        print "  To have your test's requests to 80 and 443 go to your test"
+        print "  server on ports 5000 and 5001: -t 80 -p 5000 -t 443 -p 5001"
+        raise SystemExit()
 
     # check for required options without defaults
     for opt in ["user", "api_key", "host", "domains"]:
         if not hasattr(options, opt) or not getattr(options, opt):
-            op.error("Missing required argument(s)!")
+            sys.stderr.write("Error: Missing required argument(s)\n\n")
+            op.print_help()
+            raise SystemExit()
 
     return options
 
 
-def main():
-    os.umask(0077)
-    options = get_options()
-    setup_logging(options.logfile, options.quiet, options.debug)
-
+def _run(options):
     if not options.quiet:
         print ".---------------------------------------------------------."
         print "|  Have questions or need help with Sauce Labs' tunnels?  |"
@@ -537,6 +553,7 @@ def main():
     logger.info("Forwarding: %s:%s -> %s:%s",
                 options.domains, options.tunnel_ports,
                 options.host, options.ports)
+    raise SystemExit()
     check_version()
 
     # Initial check of forwarded ports
@@ -575,12 +592,24 @@ def main():
     peace_out(tunnel)  # exits
 
 
+def main():
+    os.umask(0077)
+    options = get_options()
+    setup_logging(options.logfile, options.quiet, options.debug)
+    try:
+        _run(options)
+    except Exception, e:
+        logger.exception("Unhandled exception: %s", str(e))
+        msg = "*** Please send this to help@saucelabs.com. ***"
+        logger.critical(msg)
+        sys.stderr.write("\n%s\n" % msg)
+
+
 if __name__ == '__main__':
-    NAME = os.path.basename(__file__).rpartition(".py")[0]
     try:
         main()
     except Exception, e:
-        logger.exception("Unhandled exception: %s", str(e))
-        msg = "*** Please send this log to help@saucelabs.com. ***"
-        logger.critical(msg)
-        sys.stderr.write("\n%s\n" % msg)
+        msg = "*** Please send this to help@saucelabs.com. ***"
+        msg = "*" * len(msg) + "\n%s\n" % msg + "*" * len(msg)
+        sys.stderr.write("\n%s\n\n" % msg)
+        raise
