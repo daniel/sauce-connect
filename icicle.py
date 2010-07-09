@@ -3,19 +3,19 @@
 from __future__ import with_statement
 
 # TODO minimum:
+#   * Move to REST API v1
+#   * Go through TODOs
 #   * Stats reporting via REST
-#   * Fix scary Windows plink.exe output
 #   * Package with dependencies and licenses
 #   * Developer docs for how to build Windows .exe
 #
 # TODO:
+#   * Always include wildcard domains
 #   * Usage message with examples
-#   * REST checks
-#     * Tunnel is still running (may be shutdown by something else)
-#     * Renew lease (backend not implemented)
 #   * Daemonizing
 #     * issue: os.fork() not on Windows
 #     * issue: can't send file descriptors to null or Expect script fails
+#   * Renew tunnel lease (backend not implemented)
 #
 
 import os
@@ -46,10 +46,11 @@ VERSION = 0
 VERSIONS_URL = "http://saucelabs.com/versions.json"
 DOWNLOAD_URL = "???"
 
+RETRY_BOOT_MAX = 4
 RETRY_REST_WAIT = 5
 RETRY_REST_MAX = 6
 REST_POLL_WAIT = 3
-RETRY_SSH_MAX = 3
+RETRY_SSH_MAX = 4
 HEALTH_CHECK_INTERVAL = 30
 HEALTH_CHECK_FAIL = 5 * 60  # no good check after this amount of time == fail
 
@@ -58,6 +59,10 @@ logger = logging.getLogger(NAME)
 
 
 class TunnelMachineError(Exception):
+    pass
+
+
+class TunnelMachineBootError(TunnelMachineError):
     pass
 
 
@@ -163,9 +168,10 @@ class TunnelMachine(object):
         while True:
             doc = self._get_doc(self.url)
             status = doc.get('Status')
-            # TODO: error on halting, terminated, etc.
             if status == "running":
                 break
+            if status in ["halting", "terminated"]:
+                raise TunnelMachineBootError("Tunnel host was shutdown")
             if status != previous_status:
                 logger.info("Tunnel is %s .." % status)
             previous_status = status
@@ -199,6 +205,15 @@ class TunnelMachine(object):
     # Make us usable with contextlib.closing
     close = shutdown
 
+    def check_running(self):
+        doc = self._get_doc(self.url)
+        if doc.get('Status') == "running":
+            return
+        raise TunnelMachineError(
+            "Tunnel is no longer running. It may have been shutdown via the "
+            "website or by another tunnel script requesting these domains: %s"
+            % list(self.domains))
+
 
 class HealthCheckFail(Exception):
     pass
@@ -218,7 +233,6 @@ class HealthChecker(object):
 
     def _tcp_connected(self, port):
         with closing(socket.socket()) as sock:
-            logger.debug("Trying TCP connection to %s:%s" % (self.host, port))
             try:
                 sock.connect((self.host, port))
                 return True
@@ -285,7 +299,7 @@ class ReverseSSH(object):
         # start ssh process
         devnull = open(os.devnull)
         stderr_tmp = tempfile.TemporaryFile()
-        logger.debug("running cmd: %s" % cmd)
+        #logger.debug("running cmd: %s" % cmd)
         reverse_ssh = subprocess.Popen(
             cmd, shell=True, stdout=devnull, stderr=stderr_tmp)
         time.sleep(3)  # hack: some startup time
@@ -300,6 +314,7 @@ class ReverseSSH(object):
         while reverse_ssh.poll() is None:
             now = int(time.time())
             if (now - start_time) % HEALTH_CHECK_INTERVAL == 0:
+                self.tunnel.check_running()
                 try:
                     forwarded_health.check()
                     tunnel_health.check()
@@ -333,8 +348,10 @@ class ReverseSSH(object):
         raise ReverseSSHError("SSH process errored %d times" % attempt)
 
 
-def shutdown_and_exit(tunnel):
-    tunnel.shutdown()
+def peace_out(tunnel=None):
+    """Shutdown the tunnel and raise SystemExit."""
+    if tunnel:
+        tunnel.shutdown()
     logger.info("\ Exiting /")
     raise SystemExit()
 
@@ -343,7 +360,7 @@ def setup_signal_handler(tunnel):
 
     def sig_handler(signum, frame):
         logger.info("Received signal %d" % signum)
-        shutdown_and_exit(tunnel)
+        peace_out(tunnel)  # exits
 
     # TODO: remove SIGTERM when we implement tunnel leases
     if is_windows:
@@ -389,9 +406,9 @@ def setup_logging(logfile=None, quiet=False, debug=False):
 
     if logfile:
         if debug and not quiet:
-            print "Debug messages will be sent to %s" % logfile
+            print "* Debug messages will be sent to %s" % logfile
         fileout = logging.handlers.RotatingFileHandler(
-            filename=logfile, maxBytes=256 * 1024 ** 2, backupCount=8)
+            filename=logfile, maxBytes=128 * 1024 ** 2, backupCount=8)
         fileout.setLevel((logging.INFO, logging.DEBUG)[bool(debug)])
         fileout.setFormatter(logging.Formatter(
             "%(asctime)s - %(name)s:%(lineno)d - %(levelname)s - %(message)s"))
@@ -399,36 +416,27 @@ def setup_logging(logfile=None, quiet=False, debug=False):
 
 
 def get_options():
-    # defaults we need to set outside of optparse
-    def_port = "80"
-    def_tunnel_port = "80"
-    #logfile = "%s.log" % NAME
-
     op = optparse.OptionParser()
     op.add_option("-u", "--user", "--username")
     op.add_option("-k", "--api-key")
     op.add_option("-s", "--host", default="localhost",
                   help="[default: %default]")
     op.add_option("-p", "--port", action="append", dest="ports", default=[],
-                  help="[default: %s]" % def_port)
+                  help="[default: 80]")
     op.add_option("-d", "--domain", action="append", dest="domains",
                   help="Requests for these will go through the tunnel."
                        " Example: -d example.test -d '*.example.test'")
     op.add_option("-q", "--quiet", "-l", "--log",
                   action="store_true", default=False,
                   help="Sends output to a logfile instead of stdout.")
-    #op.add_option("--daemonize", action="store_true", default=False)
 
     og = optparse.OptionGroup(op, "Advanced options")
     og.add_option("-r", "--tunnel-port",
         action="append", dest="tunnel_ports", default=[],
         help="The port your tests expect to hit when they run."
-             " By default, we use port %s, the standard webserver port."
+             " By default, we use port 80, the standard webserver port."
              " If you know for sure _all_ your tests use something like"
-             " http://site.test:8080/ then set this 8080." % def_tunnel_port)
-    #og.add_option("--pidfile", default="%s.pid" % NAME,
-    #      help="Name of the pidfile to drop when the --daemonize option is"
-    #           "used. [default: %default]")
+             " http://site.test:8080/ then set this 8080.")
     og.add_option("--logfile", default="%s.log" % NAME,
           help="Name of the logfile to write to. [default: %default]")
     op.add_option_group(og)
@@ -443,12 +451,9 @@ def get_options():
     (options, args) = op.parse_args()
 
     # manually set these defaults
-    if options.ports == []:
-        options.ports.append(def_port)
-    if options.tunnel_ports == []:
-        options.tunnel_ports.append(def_tunnel_port)
-    #if options.daemonize:
-    #    options.logfile = options.logfile or logfile
+    if options.ports == [] and options.tunnel_ports == []:
+        options.ports == ["80"]
+        options.tunnel_ports == ["80"]
 
     if len(options.ports) != len(options.tunnel_ports):
         op.error("Each port (-p) being forwarded to requires a corresponding "
@@ -468,6 +473,12 @@ def main():
     options = get_options()
     setup_logging(options.logfile, options.quiet, options.debug)
 
+    if not options.quiet:
+        print ".---------------------------------------------------------."
+        print "|  Have questions or need help with Sauce Labs' tunnels?  |"
+        print "|  Contact us: help@saucelabs.com                         |"
+        print "-----------------------------------------------------------"
+
     logger.info("/ Starting \\")
     check_version()
 
@@ -477,24 +488,40 @@ def main():
                 "fail while the server is unreachable.")
     HealthChecker(options.host, options.ports, fail_msg=fail_msg).check()
 
-    try:
-        tunnel = TunnelMachine(options.rest_url, options.user,
-                               options.api_key, options.domains)
+    for attempt in xrange(1, RETRY_BOOT_MAX + 1):
+        try:
+            tunnel = TunnelMachine(options.rest_url, options.user,
+                                   options.api_key, options.domains)
+        except TunnelMachineError, e:
+            logger.error(e)
+            peace_out()  # exits
         setup_signal_handler(tunnel)
-        tunnel.ready_wait()
-    except TunnelMachineError, e:
-        logger.error(e)
-        logger.info("\\ Exiting /")
-        raise SystemExit()
+        try:
+            tunnel.ready_wait()
+            break
+        except TunnelMachineBootError, e:
+            logger.warning(e)
+            if attempt < RETRY_BOOT_MAX:
+                logger.info("Requesting new tunnel")
+                continue
+            logger.error("!! Could not get tunnel host")
+            logger.info("** Please contact help@saucelabs.com")
+            peace_out(tunnel)  # exits
 
     ssh = ReverseSSH(tunnel, options.host, options.ports, options.tunnel_ports)
     try:
         ssh.run()
-    except ReverseSSHError, e:
+    except (ReverseSSHError, TunnelMachineError), e:
         logger.error(e)
-    shutdown_and_exit(tunnel)
+    peace_out(tunnel)  # exits
 
 
 if __name__ == '__main__':
     NAME = os.path.basename(__file__).rpartition(".py")[0]
-    main()
+    try:
+        main()
+    except Exception, e:
+        logger.exception("Unhandled exception: %s", str(e))
+        msg = "*** Please send this log to help@saucelabs.com. ***"
+        logger.critical(msg)
+        sys.stderr.write("\n%s\n" % msg)
