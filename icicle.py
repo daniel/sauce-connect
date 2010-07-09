@@ -3,15 +3,12 @@
 from __future__ import with_statement
 
 # TODO minimum:
-#   * Move to REST API v1
-#   * Go through TODOs
-#   * Stats reporting via REST
 #   * Package with dependencies and licenses
 #   * Developer docs for how to build Windows .exe
 #
 # TODO:
-#   * Always include wildcard domains
 #   * Usage message with examples
+#   * Move to REST API v1
 #   * Daemonizing
 #     * issue: os.fork() not on Windows
 #     * issue: can't send file descriptors to null or Expect script fails
@@ -44,8 +41,9 @@ except ImportError:
 NAME = __name__
 VERSION = 0
 VERSIONS_URL = "http://saucelabs.com/versions.json"
-DOWNLOAD_URL = "???"
+DOWNLOAD_URL = "http://saucelabs.com/"  # TODO: more specific URL
 
+RETRY_PROVISION_MAX = 4
 RETRY_BOOT_MAX = 4
 RETRY_REST_WAIT = 5
 RETRY_REST_MAX = 6
@@ -58,7 +56,20 @@ is_windows = platform.system().lower() == "windows"
 logger = logging.getLogger(NAME)
 
 
+class HTTPResponseError(Exception):
+
+    def __init__(self, msg):
+        self.msg = msg
+
+    def __str__(self):
+        return "HTTP server responded with '%s' (expected 'OK')" % self.msg
+
+
 class TunnelMachineError(Exception):
+    pass
+
+
+class TunnelMachineProvisionError(TunnelMachineError):
     pass
 
 
@@ -70,6 +81,42 @@ class TunnelMachine(object):
 
     _host_search = re.compile("//([^/]+)").search
 
+    def __init__(self, rest_url, user, password, domains, metadata=None):
+        self.user = user
+        self.password = password
+        self.domains = set(domains)
+        self.metadata = dict(metadata) if metadata else dict()
+        self.metadata.update(dict(ScriptName=NAME, ScriptVersion=VERSION,
+                                  Platform=platform.platform()))
+
+        self.is_shutdown = False
+        self.base_url = "%(rest_url)s/%(user)s/tunnels" % locals()
+        self.rest_host = self._host_search(rest_url).group(1)
+        self.basic_auth_header = {"Authorization": "Basic %s" %
+                                 ("%s:%s" % (user, password)).encode("base64")}
+
+        self._set_urlopen(rest_url, user, password)
+
+        for attempt in xrange(1, RETRY_PROVISION_MAX):
+            try:
+                self._provision_tunnel()
+                break
+            except TunnelMachineProvisionError, e:
+                logger.warning(e)
+                if attempt == RETRY_PROVISION_MAX:
+                    raise TunnelMachineError(
+                        "!! Could not provision tunnel. Please contact "
+                        "help@saucelabs.com.")
+
+    def _set_urlopen(self, url, user, password):
+        # make http auth support Just Work for GET/POST
+        password_mgr = urllib2.HTTPPasswordMgrWithDefaultRealm()
+        password_mgr.add_password(realm=None, uri=url,
+                                  user=user, passwd=password)
+        auth_handler = urllib2.HTTPBasicAuthHandler(password_mgr)
+        opener = urllib2.build_opener(auth_handler)
+        self.urlopen = opener.open
+
     # decorator
     def _retry_rest_api(f):
         @wraps(f)
@@ -77,7 +124,8 @@ class TunnelMachine(object):
             for attempt in xrange(1, RETRY_REST_MAX + 1):
                 try:
                     return f(*args, **kwargs)
-                except (urllib2.URLError, socket.gaierror, socket.error), e:
+                except (HTTPResponseError, urllib2.URLError,
+                        socket.gaierror, socket.error), e:
                     logger.warning("Problem connecting to Sauce Labs REST API "
                                    "(%s)", str(e))
                     if attempt == RETRY_REST_MAX:
@@ -89,34 +137,11 @@ class TunnelMachine(object):
                     time.sleep(RETRY_REST_WAIT)
         return wrapper
 
-    def __init__(self, rest_url, user, password, domains):
-        self.user = user
-        self.password = password
-        self.domains = set(domains)
-
-        self.is_shutdown = False
-        self.base_url = "%(rest_url)s/%(user)s/tunnels" % locals()
-        self.rest_host = self._host_search(rest_url).group(1)
-        self.basic_auth_header = {"Authorization": "Basic %s" %
-                                 ("%s:%s" % (user, password)).encode("base64")}
-
-        self._set_urlopen(rest_url, user, password)
-        self._start_tunnel()
-
-    def _set_urlopen(self, url, user, password):
-        # make http auth support Just Work for GET/POST
-        password_mgr = urllib2.HTTPPasswordMgrWithDefaultRealm()
-        password_mgr.add_password(realm=None, uri=url,
-                                  user=user, passwd=password)
-        auth_handler = urllib2.HTTPBasicAuthHandler(password_mgr)
-        opener = urllib2.build_opener(auth_handler)
-        self.urlopen = opener.open
-
     @_retry_rest_api
     def _get_doc(self, url_or_req):
         with closing(self.urlopen(url_or_req)) as resp:
-            # TODO: handle this error
-            assert resp.msg == "OK"
+            if resp.msg != "OK":
+                raise HTTPResponseError(resp.msg)
             return json.loads(resp.read())
 
     @_retry_rest_api
@@ -129,11 +154,12 @@ class TunnelMachine(object):
         with closing(make_conn(self.rest_host)) as conn:
             conn.request(method="DELETE", url=url,
                          headers=self.basic_auth_header)
-            # TODO: check HTTP OK
             resp = conn.getresponse()
+            if resp.reason != "OK":
+                raise HTTPResponseError(resp.reason)
             return json.loads(resp.read())
 
-    def _start_tunnel(self):
+    def _provision_tunnel(self):
         # Shutdown any tunnel using a requested domain
         kill_list = set()
         for doc in self._get_doc(self.base_url):
@@ -144,20 +170,33 @@ class TunnelMachine(object):
         if kill_list:
             logger.info(
                 "Shutting down other tunnels using requested domains")
-        for tunnel_id in kill_list:
-            logger.debug("Shutting down old tunnel: %s" % tunnel_id)
-            url = "%s/%s" % (self.base_url, tunnel_id)
-            doc = self._get_delete_doc(url)
-            assert doc.get('ok')  # TODO: handle error
+            for tunnel_id in kill_list:
+                for attempt in xrange(1, 4):  # try a few times, then bail
+                    logger.debug("Shutting down old tunnel: %s" % tunnel_id)
+                    url = "%s/%s" % (self.base_url, tunnel_id)
+                    doc = self._get_delete_doc(url)
+                    if not doc.get('ok'):
+                        logger.warning("Old tunnel failed to shutdown?")
+                        continue
+                    doc = self._get_doc(url)
+                    while doc.get('Status') not in ["halting", "terminated"]:
+                        logger.debug("Waiting for old tunnel to start halting")
+                        time.sleep(REST_POLL_WAIT)
+                        doc = self._get_doc(url)
+                    break
 
         # Request a tunnel machine
         headers = {"Content-Type": "application/json"}
-        data = json.dumps(dict(DomainNames=list(self.domains)))
+        data = json.dumps(dict(DomainNames=list(self.domains),
+                               Metadata=self.metadata))
         req = urllib2.Request(url=self.base_url, headers=headers, data=data)
         doc = self._get_doc(req)
-        # TODO: handle this error
-        assert doc.get('ok')
-        # TODO: handle 'id' not existing — fail
+        if doc.get('error'):
+            raise TunnelMachineProvisionError(doc['error'])
+        for key in ['ok', 'id']:
+            if not doc.get(key):
+                raise TunnelMachineProvisionError(
+                    "Provisioned tunnel missing key or value for '%s'" % key)
         self.id = doc['id']
         self.url = "%s/%s" % (self.base_url, self.id)
         logger.debug("Provisioned tunnel: %s" % self.id)
@@ -416,9 +455,24 @@ def setup_logging(logfile=None, quiet=False, debug=False):
 
 
 def get_options():
-    op = optparse.OptionParser()
+    usage = """Usage: %prog -u <user> -k <api_key> -s <webserver> -d <domain>
+
+Examples:
+  Have tests for example.com go to a staging server on your intranet:
+    %prog -u testuser -k 123-abc -s staging.local -d example.com
+
+  Have tests for example.com go to your local machine on port 5000:
+    %prog -u testuser -k 123-abc -s localhost -p 5000 -d example.com
+
+  Have HTTP and HTTPS traffic for *.example.com go to the staging server:
+    %prog -u testuser -k 123-abc -s staging.local \\
+                 -d example.com -d *.example.com \\
+                 -p 80 -r 80 -p 443 -r 443"""
+
+    op = optparse.OptionParser(usage=usage)
     op.add_option("-u", "--user", "--username")
-    op.add_option("-k", "--api-key")
+    op.add_option("-k", "--api-key",
+                  help="On your account page: https://saucelabs.com/account")
     op.add_option("-s", "--host", default="localhost",
                   help="[default: %default]")
     op.add_option("-p", "--port", action="append", dest="ports", default=[],
@@ -433,7 +487,7 @@ def get_options():
     og = optparse.OptionGroup(op, "Advanced options")
     og.add_option("-r", "--tunnel-port",
         action="append", dest="tunnel_ports", default=[],
-        help="The port your tests expect to hit when they run."
+        help="The ports your tests expect to hit when they run."
              " By default, we use port 80, the standard webserver port."
              " If you know for sure _all_ your tests use something like"
              " http://site.test:8080/ then set this 8080.")
@@ -452,8 +506,8 @@ def get_options():
 
     # manually set these defaults
     if options.ports == [] and options.tunnel_ports == []:
-        options.ports == ["80"]
-        options.tunnel_ports == ["80"]
+        options.ports = ["80"]
+        options.tunnel_ports = ["80"]
 
     if len(options.ports) != len(options.tunnel_ports):
         op.error("Each port (-p) being forwarded to requires a corresponding "
@@ -480,6 +534,9 @@ def main():
         print "-----------------------------------------------------------"
 
     logger.info("/ Starting \\")
+    logger.info("Forwarding: %s:%s -> %s:%s",
+                options.domains, options.tunnel_ports,
+                options.host, options.ports)
     check_version()
 
     # Initial check of forwarded ports
@@ -488,10 +545,12 @@ def main():
                 "fail while the server is unreachable.")
     HealthChecker(options.host, options.ports, fail_msg=fail_msg).check()
 
+    metadata = dict(OwnerHost=options.host, OwnerPorts=options.ports,
+                    Ports=options.tunnel_ports)
     for attempt in xrange(1, RETRY_BOOT_MAX + 1):
         try:
             tunnel = TunnelMachine(options.rest_url, options.user,
-                                   options.api_key, options.domains)
+                                   options.api_key, options.domains, metadata)
         except TunnelMachineError, e:
             logger.error(e)
             peace_out()  # exits
