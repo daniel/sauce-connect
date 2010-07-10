@@ -479,26 +479,28 @@ def setup_logging(logfile=None, quiet=False, debug=False):
 
 def get_options():
     usage = """
-Usage: %prog -u <user> -k <api_key> -s <webserver> -d <domain> [optionals]
+Usage: %(name)s -u <user> -k <api_key> -s <webserver> -d <domain> [options]
 
 Examples:
   Have tests for example.com go to a staging server on your intranet:
-    %prog -u sauceuser -k 123-abc -s staging.local -d example.com
+    %(name)s -u user -k 123-abc -s staging.local -d example.com
 
   Have HTTP and HTTPS traffic for *.example.com go to the staging server:
-    %prog -u sauceuser -k 123-abc -s staging.local -p 80 -p 443 \\
+    %(name)s -u user -k 123-abc -s staging.local -p 80 -p 443 \\
                  -d example.com -d *.example.com
 
   Have tests for example.com go to your local machine on port 5000:
-    %prog -u sauceuser -k 123-abc -s 127.0.0.1 -t 80 -p 5000 -d example.com
+    %(name)s -u user -k 123-abc -s 127.0.0.1 -t 80 -p 5000 -d example.com
 
 Performance tip:
   It is highly recommended you run this script on the same machine as your
   test server (i.e., you would use "-s 127.0.0.1" or "-s localhost"). Using
   a remote server introduces higher latency (slower web requests) and is
-  another failure point.""".strip()
+  another failure point.
+""" % dict(name=NAME)
 
-    version = "%%prog version %s" % VERSION
+    usage = usage.strip()
+    version = "%s %s" % (NAME, VERSION)
     logfile = "%s.log" % NAME
 
     op = optparse.OptionParser(usage=usage, version=version)
