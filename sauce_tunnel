@@ -39,9 +39,9 @@ except ImportError:
     import simplejson as json  # Python 2.5 dependency
 
 NAME = "sauce_tunnel"
-VERSION = 2
+PRODUCT_NAME = "Sauce Tunnel"
+VERSION = "10.07"  # YY.MM.n (drop .n until needed)
 VERSIONS_URL = "http://saucelabs.com/versions.json"
-DOWNLOAD_URL = "http://saucelabs.com/"  # TODO: more specific URL
 
 RETRY_PROVISION_MAX = 4
 RETRY_BOOT_MAX = 4
@@ -122,9 +122,13 @@ class TunnelMachine(object):
     def _retry_rest_api(f):
         @wraps(f)
         def wrapper(*args, **kwargs):
+            previous_failed = False
             for attempt in xrange(1, RETRY_REST_MAX + 1):
                 try:
-                    return f(*args, **kwargs)
+                    result = f(*args, **kwargs)
+                    if previous_failed:
+                        logger.info("Connection restored")
+                    return result
                 except (HTTPResponseError, urllib2.URLError,
                         socket.gaierror, socket.error), e:
                     logger.warning("Problem connecting to Sauce Labs REST API "
@@ -134,7 +138,8 @@ class TunnelMachine(object):
                             "Could not reach Sauce Labs REST API after %d "
                             "tries. Is your network down or firewalled?"
                             % attempt)
-                    logger.info("Retrying in %ds", RETRY_REST_WAIT)
+                    previous_failed = True
+                    logger.debug("Retrying in %ds", RETRY_REST_WAIT)
                     time.sleep(RETRY_REST_WAIT)
         return wrapper
 
@@ -436,14 +441,19 @@ def check_version():
         logger.info(failed_msg)
         return
     try:
-        latest = version_doc[u'Sauce Tunnel'][u'version']
+        latest = version_doc[unicode(PRODUCT_NAME)][u'version']
+        download_url = version_doc[unicode(PRODUCT_NAME)][u'download_url']
     except KeyError, e:
         logger.debug("Bad version doc, missing key: %s", str(e))
         logger.info(failed_msg)
         return
 
     if VERSION < latest:
-        logger.warning("** Please update Sauce Tunnel: %s" % DOWNLOAD_URL)
+        filename = ("%s %s.zip" % (PRODUCT_NAME, latest)).replace(" ", "-")
+        url = "%s/%s" % (download_url, filename)
+        update_msg = "** Please update Sauce Tunnel: %s" % url
+        logger.warning(update_msg)
+        sys.stderr.write("%s\n" % update_msg)
     return latest
 
 
