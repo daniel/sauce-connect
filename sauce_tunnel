@@ -39,7 +39,7 @@ except ImportError:
     import simplejson as json  # Python 2.5 dependency
 
 NAME = "sauce_tunnel"
-VERSION = 1
+VERSION = 2
 VERSIONS_URL = "http://saucelabs.com/versions.json"
 DOWNLOAD_URL = "http://saucelabs.com/"  # TODO: more specific URL
 
@@ -388,7 +388,7 @@ class ReverseSSH(object):
         else:
             logger.info("SSH process exited")
         if reverse_ssh_stderr:
-            logger.warning("SSH stderr was: '%s'" % reverse_ssh_stderr)
+            logger.debug("SSH stderr was: '%s'" % reverse_ssh_stderr)
 
         return reverse_ssh.returncode
 
