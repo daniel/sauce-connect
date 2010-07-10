@@ -220,12 +220,11 @@ class TunnelMachine(object):
         logger.info("Tunnel is running on %s" % self.host)
 
     def _kill_reverse_ssh(self):
-        if not self.reverse_ssh_pid:
+        if is_windows or not self.reverse_ssh_pid:
             return
-        sig = "SIGTERM" if is_windows else "SIGHUP"
         try:
-            os.kill(self.reverse_ssh_pid, getattr(signal, sig))
-            logger.debug("Sent %s to PID %d", sig, self.reverse_ssh_pid)
+            os.kill(self.reverse_ssh_pid, signal.SIGHUP)
+            logger.debug("Sent SIGUP to PID %d", self.reverse_ssh_pid)
         except OSError:
             pass
 
