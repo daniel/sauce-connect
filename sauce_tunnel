@@ -89,6 +89,7 @@ class TunnelMachine(object):
         self.metadata.update(dict(ScriptName=NAME, ScriptVersion=VERSION,
                                   Platform=platform.platform()))
 
+        self.reverse_ssh_pid = None
         self.is_shutdown = False
         self.base_url = "%(rest_url)s/%(user)s/tunnels" % locals()
         self.rest_host = self._host_search(rest_url).group(1)
@@ -218,6 +219,16 @@ class TunnelMachine(object):
         self.host = doc['Host']
         logger.info("Tunnel is running on %s" % self.host)
 
+    def _kill_reverse_ssh(self):
+        if not self.reverse_ssh_pid:
+            return
+        sig = "SIGTERM" if is_windows else "SIGHUP"
+        try:
+            os.kill(self.reverse_ssh_pid, getattr(signal, sig))
+            logger.debug("Sent %s to PID %d", sig, self.reverse_ssh_pid)
+        except OSError:
+            pass
+
     def shutdown(self):
         if self.is_shutdown:
             return
@@ -333,7 +344,7 @@ class ReverseSSH(object):
         if is_windows:
             cmd = "echo 'n' | %s" % self.get_plink_command()
         else:
-            cmd = 'expect -c "%s"' % self.get_expect_script()
+            cmd = 'exec expect -c "%s"' % self.get_expect_script()
 
         # start ssh process
         devnull = open(os.devnull)
@@ -341,6 +352,7 @@ class ReverseSSH(object):
         #logger.debug("running cmd: %s" % cmd)
         reverse_ssh = subprocess.Popen(
             cmd, shell=True, stdout=devnull, stderr=stderr_tmp)
+        self.tunnel.reverse_ssh_pid = reverse_ssh.pid
         time.sleep(3)  # hack: some startup time
 
         # ssh process is running
@@ -592,7 +604,6 @@ def _run(options):
 
 
 def main():
-    os.umask(0077)
     options = get_options()
     setup_logging(options.logfile, options.quiet, options.debug)
     try:
