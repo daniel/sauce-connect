@@ -233,6 +233,8 @@ class TunnelMachine(object):
         if self.is_shutdown:
             return
 
+        self._kill_reverse_ssh()
+
         logger.info("Shutting down tunnel (please wait)")
         logger.debug("Tunnel ID: %s" % self.id)
 
