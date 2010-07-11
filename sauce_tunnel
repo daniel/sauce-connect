@@ -303,6 +303,7 @@ class HealthChecker(object):
     def check(self):
         for port in self.ports:
             if self._tcp_connected(port):
+                # TCP connection succeeded
                 self.last_tcp_connect[port] = time.time()
                 if self.previous_failed[port]:
                     logger.info(
@@ -310,6 +311,7 @@ class HealthChecker(object):
                 self.previous_failed[port] = False
                 continue
             # TCP connection failed
+            self.previous_failed[port] = True
             logger.warning(self.fail_msg % dict(host=self.host, port=port))
             if time.time() - self.last_tcp_connect[port] > HEALTH_CHECK_FAIL:
                 raise HealthCheckFail(
@@ -456,9 +458,7 @@ def check_version():
         return
 
     if VERSION < latest:
-        filename = ("%s %s.zip" % (PRODUCT_NAME, latest)).replace(" ", "-")
-        url = "%s/%s" % (download_url, filename)
-        update_msg = "** Please update Sauce Tunnel: %s" % url
+        update_msg = "** Please update Sauce Tunnel: %s" % download_url
         logger.warning(update_msg)
         sys.stderr.write("%s\n" % update_msg)
     return latest
