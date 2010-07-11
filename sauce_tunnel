@@ -127,9 +127,11 @@ class TunnelMachine(object):
                 try:
                     result = f(*args, **kwargs)
                     if previous_failed:
-                        logger.info("Connection restored")
+                        logger.info(
+                            "Connection succeeded")
                     return result
-                except (HTTPResponseError, urllib2.URLError,
+                except (HTTPResponseError,
+                        urllib2.URLError, httplib.HTTPException,
                         socket.gaierror, socket.error), e:
                     logger.warning("Problem connecting to Sauce Labs REST API "
                                    "(%s)", str(e))
@@ -286,6 +288,7 @@ class HealthChecker(object):
                              "can not get to %(host)s:%(port)d.")
         self.ports = frozenset(int(p) for p in ports)
         self.last_tcp_connect = defaultdict(time.time)
+        self.previous_failed = defaultdict(lambda: False)
 
     def _tcp_connected(self, port):
         with closing(socket.socket()) as sock:
@@ -301,6 +304,10 @@ class HealthChecker(object):
         for port in self.ports:
             if self._tcp_connected(port):
                 self.last_tcp_connect[port] = time.time()
+                if self.previous_failed[port]:
+                    logger.info(
+                        "Succesfully connected to %s:%s" % (self.host, port))
+                self.previous_failed[port] = False
                 continue
             # TCP connection failed
             logger.warning(self.fail_msg % dict(host=self.host, port=port))
@@ -330,7 +337,7 @@ class ReverseSSH(object):
         return dash_Rs
 
     def get_plink_command(self):
-        return ("plink -l %s -pw %s -N %s %s"
+        return ("plink\plink -l %s -pw %s -N %s %s"
                 % (self.tunnel.user, self.tunnel.password,
                    self._dash_Rs, self.tunnel.host))
 
@@ -365,8 +372,8 @@ class ReverseSSH(object):
         announced_running = False
         forwarded_health = HealthChecker(self.host, self.ports)
         tunnel_health = HealthChecker(host=self.tunnel.host, ports=[22],
-                fail_msg="!! Your tests may fail because your network"
-                         " can not get to the tunnel host.")
+            fail_msg="!! Your tests may fail because your network can not get "
+                     "to the tunnel host (%s:%d)." % (self.tunnel.host, 22))
         start_time = int(time.time())
         while reverse_ssh.poll() is None:
             now = int(time.time())
