@@ -35,7 +35,7 @@ except ImportError:
     import simplejson as json  # Python 2.5 dependency
 
 NAME = "sauce_tunnel"
-BUILD = 1
+BUILD = 2
 PRODUCT_NAME = "Sauce Tunnel"
 VERSIONS_URL = "http://saucelabs.com/versions.json"
 
@@ -549,7 +549,7 @@ Performance tip:
 
     og = optparse.OptionGroup(op, "Script debugging options")
     og.add_option("--debug", action="store_true", default=False,
-                  help="Spews extra info into ")
+                  help="Send debugging messages to the logfile")
     og.add_option("--rest-url", default="https://saucelabs.com/rest",
                   help="[%default]")
     op.add_option_group(og)
