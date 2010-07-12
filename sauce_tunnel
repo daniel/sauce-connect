@@ -35,7 +35,7 @@ except ImportError:
     import simplejson as json  # Python 2.5 dependency
 
 NAME = "sauce_tunnel"
-BUILD = 2
+BUILD = 3
 PRODUCT_NAME = "Sauce Tunnel"
 VERSIONS_URL = "http://saucelabs.com/versions.json"
 
