@@ -2,12 +2,7 @@
 # encoding: utf-8
 from __future__ import with_statement
 
-# TODO minimum:
-#   * Package with dependencies and licenses
-#   * Developer docs for how to build Windows .exe
-#
 # TODO:
-#   * Usage message with examples
 #   * Move to REST API v1
 #   * Daemonizing
 #     * issue: os.fork() not on Windows
