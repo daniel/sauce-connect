@@ -595,7 +595,6 @@ def _run(options):
                 options.domains, options.tunnel_ports,
                 options.host, options.ports)
     check_version()
-    raise SystemExit
 
     # Initial check of forwarded ports
     fail_msg = ("!! Are you sure this machine can get to your web server on "
