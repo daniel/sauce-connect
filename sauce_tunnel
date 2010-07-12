@@ -4,9 +4,10 @@ from __future__ import with_statement
 
 # TODO:
 #   * Move to REST API v1
+#   * windows: SSH link healthcheck (PuTTY session file hack?)
 #   * Daemonizing
-#     * issue: os.fork() not on Windows
-#     * issue: can't send file descriptors to null or Expect script fails
+#     * issue: windows: no os.fork()
+#     * issue: unix: null file descriptors causes Expect script to fail
 #   * Renew tunnel lease (backend not implemented)
 #
 
@@ -34,8 +35,8 @@ except ImportError:
     import simplejson as json  # Python 2.5 dependency
 
 NAME = "sauce_tunnel"
+BUILD = 1
 PRODUCT_NAME = "Sauce Tunnel"
-VERSION = "10.07"  # YY.MM.n (drop .n until needed)
 VERSIONS_URL = "http://saucelabs.com/versions.json"
 
 RETRY_PROVISION_MAX = 4
@@ -44,7 +45,7 @@ RETRY_REST_WAIT = 5
 RETRY_REST_MAX = 6
 REST_POLL_WAIT = 3
 RETRY_SSH_MAX = 4
-HEALTH_CHECK_INTERVAL = 30
+HEALTH_CHECK_INTERVAL = 15
 HEALTH_CHECK_FAIL = 5 * 60  # no good check after this amount of time == fail
 
 is_windows = platform.system().lower() == "windows"
@@ -81,7 +82,7 @@ class TunnelMachine(object):
         self.password = password
         self.domains = set(domains)
         self.metadata = dict(metadata) if metadata else dict()
-        self.metadata.update(dict(ScriptName=NAME, ScriptVersion=VERSION,
+        self.metadata.update(dict(ScriptName=NAME, ScriptBuild=BUILD,
                                   Platform=platform.platform()))
 
         self.reverse_ssh_pid = None
@@ -342,8 +343,9 @@ class ReverseSSH(object):
         return (
             "set timeout -1;"
             "spawn ssh-keygen -q -R %s;" % self.tunnel.host +
-            "spawn ssh -q -p 22 -l %s -N %s %s;"
-                % (self.tunnel.user, self._dash_Rs, self.tunnel.host) +
+            "spawn ssh -q -p 22 -l %s -o ServerAliveInterval=%s -N %s %s;"
+                % (self.tunnel.user, HEALTH_CHECK_INTERVAL,
+                   self._dash_Rs, self.tunnel.host) +
             'expect \\"Are you sure you want to continue connecting'
             ' (yes/no)?\\";send -- yes\\r;'
             "expect *password:;send -- %s\\r;" % self.tunnel.password +
@@ -395,7 +397,7 @@ class ReverseSSH(object):
             logger.warning("SSH process exited with error code %d",
                            reverse_ssh.returncode)
         else:
-            logger.info("SSH process exited")
+            logger.info("SSH process exited (maybe due to network problems)")
         if reverse_ssh_stderr:
             logger.debug("SSH stderr was: '%s'" % reverse_ssh_stderr)
 
@@ -403,10 +405,14 @@ class ReverseSSH(object):
 
     def run(self):
         for attempt in xrange(1, RETRY_SSH_MAX + 1):
-            # if clean exit, then bail (e.g., process receives SIGINT)
+            # returncode 0 will happen due to ServerAlive checks failing.
+            # this may result in a listening port forwarding nowhere, so
+            # don't bother restarting the SSH connection.
+            # TODO: revisit if server uses OpenSSH instead of Twisted SSH
             if self._start_reverse_ssh() == 0:
                 return
-        raise ReverseSSHError("SSH process errored %d times" % attempt)
+        raise ReverseSSHError(
+            "SSH process errored %d times (bad network?)" % attempt)
 
 
 def peace_out(tunnel=None):
@@ -423,7 +429,7 @@ def setup_signal_handler(tunnel):
         logger.info("Received signal %d" % signum)
         peace_out(tunnel)  # exits
 
-    # TODO: remove SIGTERM when we implement tunnel leases
+    # TODO: ?? remove SIGTERM when we implement tunnel leases
     if is_windows:
         # TODO: What do these Windows signals mean?
         supported_signals = ["SIGABRT", "SIGBREAK", "SIGINT", "SIGTERM"]
@@ -445,18 +451,26 @@ def check_version():
         logger.info(failed_msg)
         return
     try:
-        latest = version_doc[unicode(PRODUCT_NAME)][u'version']
+        version = version_doc[unicode(PRODUCT_NAME)][u'version']
         download_url = version_doc[unicode(PRODUCT_NAME)][u'download_url']
     except KeyError, e:
         logger.debug("Bad version doc, missing key: %s", str(e))
         logger.info(failed_msg)
         return
 
-    if VERSION < latest:
+    update_available = False
+    try:
+        latest_build = int(version.partition("build")[2])
+    except (IndexError, ValueError):
+        update_available = True
+    if not latest_build:
+        update_available = True
+    if BUILD < latest_build:
+        update_available = True
+    if update_available:
         update_msg = "** Please update Sauce Tunnel: %s" % download_url
         logger.warning(update_msg)
         sys.stderr.write("%s\n" % update_msg)
-    return latest
 
 
 def setup_logging(logfile=None, quiet=False, debug=False):
@@ -502,7 +516,7 @@ Performance tip:
 """ % dict(name=NAME)
 
     usage = usage.strip()
-    version = "%s %s" % (NAME, VERSION)
+    version = "%s build %s" % (NAME, BUILD)
     logfile = "%s.log" % NAME
 
     op = optparse.OptionParser(usage=usage, version=version)
@@ -581,6 +595,7 @@ def _run(options):
                 options.domains, options.tunnel_ports,
                 options.host, options.ports)
     check_version()
+    raise SystemExit
 
     # Initial check of forwarded ports
     fail_msg = ("!! Are you sure this machine can get to your web server on "
