@@ -458,6 +458,7 @@ def check_version():
         logger.info(failed_msg)
         return
 
+    latest_build = None
     update_available = False
     try:
         latest_build = int(version.partition("build")[2])
