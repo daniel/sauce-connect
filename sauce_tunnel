@@ -35,8 +35,8 @@ except ImportError:
     import simplejson as json  # Python 2.5 dependency
 
 NAME = "sauce_tunnel"
-BUILD = 3
-PRODUCT_NAME = "Sauce Tunnel"
+BUILD = 4
+PRODUCT_NAME = u"Sauce Tunnel"
 VERSIONS_URL = "http://saucelabs.com/versions.json"
 
 RETRY_PROVISION_MAX = 4
@@ -451,24 +451,20 @@ def check_version():
         logger.info(failed_msg)
         return
     try:
-        version = version_doc[unicode(PRODUCT_NAME)][u'version']
-        download_url = version_doc[unicode(PRODUCT_NAME)][u'download_url']
+        version = version_doc[PRODUCT_NAME][u'version']
+        download_url = version_doc[PRODUCT_NAME][u'download_url']
     except KeyError, e:
         logger.debug("Bad version doc, missing key: %s", str(e))
         logger.info(failed_msg)
         return
 
-    latest_build = None
-    update_available = False
     try:
         latest_build = int(version.partition("build")[2])
-    except (IndexError, ValueError):
-        update_available = True
-    if not latest_build:
-        update_available = True
+    except (IndexError, ValueError), e:
+        logger.debug("Couldn't parse build number: %s", str(e))
+        logger.info(failed_msg)
+        return
     if BUILD < latest_build:
-        update_available = True
-    if update_available:
         update_msg = "** Please update Sauce Tunnel: %s" % download_url
         logger.warning(update_msg)
         sys.stderr.write("%s\n" % update_msg)
