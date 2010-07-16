@@ -1,0 +1,13 @@
+??????????  1.0-build6  Sauce Labs <help@saucelabs.com>
+
+	* Added README for unix regarding the dependency on Expect.
+
+	* Stripped SSH error output before printing in DEBUG mode.
+
+2010-07-16  1.0-build5  Sauce Labs <help@saucelabs.com>
+
+	* Exit with code 1 on errors.
+
+	* In debug mode, log options.
+
+    * Added brief windows README.

@@ -1,0 +1,7 @@
+The sauce_tunnel script requires the 'expect' application be installed. Mac OS
+X comes with 'expect', so there is nothing you need to do. On Debian/Ubuntu,
+you can install it with:
+
+    sudo aptitude install expect
+
+Other Linux and BSD distros should have a similar package.
