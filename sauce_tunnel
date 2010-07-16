@@ -391,7 +391,7 @@ class ReverseSSH(object):
         # ssh process has exited
         devnull.close()
         stderr_tmp.seek(0)
-        reverse_ssh_stderr = stderr_tmp.read()
+        reverse_ssh_stderr = stderr_tmp.read().strip()
         stderr_tmp.close()
         if reverse_ssh.returncode != 0:
             logger.warning("SSH process exited with error code %d",
@@ -399,7 +399,7 @@ class ReverseSSH(object):
         else:
             logger.info("SSH process exited (maybe due to network problems)")
         if reverse_ssh_stderr:
-            logger.debug("SSH stderr was: '%s'" % reverse_ssh_stderr.strip())
+            logger.debug("SSH stderr was: '%s'" % reverse_ssh_stderr)
 
         return reverse_ssh.returncode
 
