@@ -35,7 +35,7 @@ except ImportError:
     import simplejson as json  # Python 2.5 dependency
 
 NAME = "sauce_tunnel"
-BUILD = 4
+BUILD = 5
 PRODUCT_NAME = u"Sauce Tunnel"
 VERSIONS_URL = "http://saucelabs.com/versions.json"
 
@@ -632,6 +632,11 @@ def _run(options):
 def main():
     options = get_options()
     setup_logging(options.logfile, options.quiet, options.debug)
+
+    _ops = dict((k, v) for k, v in options.__dict__.iteritems()
+                                if k != "api_key")
+    logger.debug("options: %s" % _ops)
+
     try:
         _run(options)
     except Exception, e:
