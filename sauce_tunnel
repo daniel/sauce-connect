@@ -415,12 +415,12 @@ class ReverseSSH(object):
             "SSH process errored %d times (bad network?)" % attempt)
 
 
-def peace_out(tunnel=None):
+def peace_out(tunnel=None, returncode=0):
     """Shutdown the tunnel and raise SystemExit."""
     if tunnel:
         tunnel.shutdown()
     logger.info("\ Exiting /")
-    raise SystemExit()
+    raise SystemExit(returncode)
 
 
 def setup_signal_handler(tunnel):
@@ -568,14 +568,14 @@ Performance tip:
         print "Example option usage:"
         print "  To have your test's requests to 80 and 443 go to your test"
         print "  server on ports 5000 and 5001: -t 80 -p 5000 -t 443 -p 5001"
-        raise SystemExit()
+        raise SystemExit(1)
 
     # check for required options without defaults
     for opt in ["user", "api_key", "host", "domains"]:
         if not hasattr(options, opt) or not getattr(options, opt):
             sys.stderr.write("Error: Missing required argument(s)\n\n")
             op.print_help()
-            raise SystemExit()
+            raise SystemExit(1)
 
     return options
 
@@ -607,7 +607,7 @@ def _run(options):
                                    options.api_key, options.domains, metadata)
         except TunnelMachineError, e:
             logger.error(e)
-            peace_out()  # exits
+            peace_out(returncode=1)  # exits
         setup_signal_handler(tunnel)
         try:
             tunnel.ready_wait()
@@ -619,7 +619,7 @@ def _run(options):
                 continue
             logger.error("!! Could not get tunnel host")
             logger.info("** Please contact help@saucelabs.com")
-            peace_out(tunnel)  # exits
+            peace_out(tunnel, returncode=1)  # exits
 
     ssh = ReverseSSH(tunnel, options.host, options.ports, options.tunnel_ports)
     try:
