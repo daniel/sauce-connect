@@ -18,9 +18,11 @@ fi
 
 mkdir $dest
 cp -X changelog $dest
+
 cp -aX unix $dest
+cp -aX $prevdest/unix/simplejson $dest/unix
 cp -X sauce_tunnel $dest/unix
+
 cp -aX windows $dest
 cp -aX $prevdest/windows/plink $dest/windows
-
 echo "!! You need to build and copy in the Windows version."
