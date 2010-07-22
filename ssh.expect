@@ -1,8 +1,0 @@
-set timeout -1;
-spawn ssh-keygen -R [lrange $argv 0 0]
-spawn ssh -v -p 22 -N -R 0.0.0.0:80:www.google.com:80 [lrange $argv 0 0]
-expect "Are you sure you want to continue connecting (yes/no)?"
-send -- yes\r
-expect *password:
-send -- [lrange $argv 1 1]\r
-interact
