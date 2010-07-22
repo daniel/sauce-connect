@@ -1,3 +1,13 @@
+2010-07-22  1.0-build8  Sauce Labs <help@saucelabs.com>
+
+	* Fix Traceback when no domains given.
+
+	* Re-add simplejson library into the unix directory.
+
+2010-07-19  1.0-build7  Sauce Labs <help@saucelabs.com>
+
+	* Check that domains don't contain '/' (e.g., URL used).
+
 2010-07-16  1.0-build6  Sauce Labs <help@saucelabs.com>
 
 	* Added README for unix regarding the dependency on Expect.
