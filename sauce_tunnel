@@ -35,7 +35,7 @@ except ImportError:
     import simplejson as json  # Python 2.5 dependency
 
 NAME = "sauce_tunnel"
-BUILD = 8
+BUILD = 9
 PRODUCT_NAME = u"Sauce Tunnel"
 VERSIONS_URL = "http://saucelabs.com/versions.json"
 
@@ -589,6 +589,48 @@ Performance tip:
     return options
 
 
+class MissingDependenciesError(Exception):
+
+    aptitude_map = dict(ssh="openssh-client", expect="expect")
+
+    def __init__(self, dependency, included=False):
+        self.dependency = dependency
+        self.included = included
+
+    def __str__(self):
+        msg = "You are missing '%s'." % self.dependency
+        if self.included:
+            return (msg + " This should have come with the zip\n"
+                    "you downloaded. If you need assistance, please "
+                    "contact help@saucelabs.com.")
+
+        msg += " Please install it or contact\nhelp@saucelabs.com for help."
+        if (not self.included
+            and platform.linux_distribution()[0].lower()
+                in ['ubuntu', 'debian']
+            and self.aptitude_map.get(self.dependency)):
+                msg += ("\n\nTo install: sudo aptitude install %s"
+                        % self.aptitude_map[self.dependency])
+        return msg
+
+
+def check_dependencies():
+    if is_windows:
+        if not os.path.exists("plink\plink.exe"):
+            raise MissingDependenciesError("plink\plink.exe", included=True)
+        return
+
+    # on unix
+    with open(os.devnull) as devnull:
+        for command in ["ssh -V", "expect -v"]:
+            try:
+                subprocess.check_call(command, shell=True, stdout=devnull,
+                                               stderr=subprocess.STDOUT)
+            except subprocess.CalledProcessError:
+                dependency = command.split(" ")[0]
+                raise MissingDependenciesError(dependency, included=False)
+
+
 def _run(options):
     if not options.quiet:
         print ".---------------------------------------------------------."
@@ -600,7 +642,6 @@ def _run(options):
     logger.info("Forwarding: %s:%s -> %s:%s",
                 options.domains, options.tunnel_ports,
                 options.host, options.ports)
-    check_version()
 
     # Initial check of forwarded ports
     fail_msg = ("!! Are you sure this machine can get to your web server on "
@@ -639,27 +680,35 @@ def _run(options):
 
 
 def main():
+    try:
+        check_dependencies()
+    except MissingDependenciesError, e:
+        print "\n== Missing requirements ==\n"
+        print e
+        raise SystemExit(1)
+
     options = get_options()
     setup_logging(options.logfile, options.quiet, options.debug)
 
-    _ops = dict((k, v) for k, v in options.__dict__.iteritems()
-                                if k != "api_key")
+    # log the options
+    _ops = dict(options.__dict__)
+    del _ops['api_key']  # no need to log the API key
     logger.debug("options: %s" % _ops)
 
     try:
         _run(options)
     except Exception, e:
         logger.exception("Unhandled exception: %s", str(e))
-        msg = "*** Please send this to help@saucelabs.com. ***"
+        msg = "*** Please send this error to help@saucelabs.com. ***"
         logger.critical(msg)
-        sys.stderr.write("\n%s\n" % msg)
+        sys.stderr.write("\noptions: %s\n\n%s\n" % (_ops, msg))
 
 
 if __name__ == '__main__':
     try:
         main()
     except Exception, e:
-        msg = "*** Please send this to help@saucelabs.com. ***"
+        msg = "*** Please send this error to help@saucelabs.com. ***"
         msg = "*" * len(msg) + "\n%s\n" % msg + "*" * len(msg)
         sys.stderr.write("\n%s\n\n" % msg)
         raise

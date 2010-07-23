@@ -1,3 +1,7 @@
+2010-07-23  1.0-build9  Sauce Labs <help@saucelabs.com>
+
+	* Check for ssh and expect on startup.
+
 2010-07-22  1.0-build8  Sauce Labs <help@saucelabs.com>
 
 	* Fix Traceback when no domains given.
