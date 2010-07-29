@@ -35,7 +35,7 @@ except ImportError:
     import simplejson as json  # Python 2.5 dependency
 
 NAME = "sauce_tunnel"
-BUILD = 9
+BUILD = 10
 PRODUCT_NAME = u"Sauce Tunnel"
 VERSIONS_URL = "http://saucelabs.com/versions.json"
 
@@ -49,6 +49,7 @@ HEALTH_CHECK_INTERVAL = 15
 HEALTH_CHECK_FAIL = 5 * 60  # no good check after this amount of time == fail
 
 is_windows = platform.system().lower() == "windows"
+is_openbsd = platform.system().lower() == "openbsd"
 logger = logging.getLogger(NAME)
 
 
@@ -102,7 +103,7 @@ class TunnelMachine(object):
                 logger.warning(e)
                 if attempt == RETRY_PROVISION_MAX:
                     raise TunnelMachineError(
-                        "!! Could not provision tunnel. Please contact "
+                        "!! Could not provision tunnel host. Please contact "
                         "help@saucelabs.com.")
 
     def _set_urlopen(self, url, user, password):
@@ -173,18 +174,20 @@ class TunnelMachine(object):
                 kill_list.add(doc['id'])
         if kill_list:
             logger.info(
-                "Shutting down other tunnels using requested domains")
+                "Shutting down other tunnel hosts using requested domains")
             for tunnel_id in kill_list:
                 for attempt in xrange(1, 4):  # try a few times, then bail
-                    logger.debug("Shutting down old tunnel: %s" % tunnel_id)
+                    logger.debug(
+                        "Shutting down old tunnel host: %s" % tunnel_id)
                     url = "%s/%s" % (self.base_url, tunnel_id)
                     doc = self._get_delete_doc(url)
                     if not doc.get('ok'):
-                        logger.warning("Old tunnel failed to shutdown?")
+                        logger.warning("Old tunnel host failed to shutdown?")
                         continue
                     doc = self._get_doc(url)
                     while doc.get('Status') not in ["halting", "terminated"]:
-                        logger.debug("Waiting for old tunnel to start halting")
+                        logger.debug(
+                            "Waiting for old tunnel host to start halting")
                         time.sleep(REST_POLL_WAIT)
                         doc = self._get_doc(url)
                     break
@@ -200,10 +203,11 @@ class TunnelMachine(object):
         for key in ['ok', 'id']:
             if not doc.get(key):
                 raise TunnelMachineProvisionError(
-                    "Provisioned tunnel missing key or value for '%s'" % key)
+                    "Document for provisioned tunnel host is missing the key "
+                    "or value for '%s'" % key)
         self.id = doc['id']
         self.url = "%s/%s" % (self.base_url, self.id)
-        logger.debug("Provisioned tunnel: %s" % self.id)
+        logger.debug("Provisioned tunnel host: %s" % self.id)
 
     def ready_wait(self):
         """Wait for the machine to reach the 'running' state."""
@@ -216,18 +220,18 @@ class TunnelMachine(object):
             if status in ["halting", "terminated"]:
                 raise TunnelMachineBootError("Tunnel host was shutdown")
             if status != previous_status:
-                logger.info("Tunnel is %s .." % status)
+                logger.info("Tunnel host is %s .." % status)
             previous_status = status
             time.sleep(REST_POLL_WAIT)
         self.host = doc['Host']
-        logger.info("Tunnel is running on %s" % self.host)
+        logger.info("Tunnel host is running at %s" % self.host)
 
     def _kill_reverse_ssh(self):
         if is_windows or not self.reverse_ssh_pid:
             return
         try:
             os.kill(self.reverse_ssh_pid, signal.SIGHUP)
-            logger.debug("Sent SIGUP to PID %d", self.reverse_ssh_pid)
+            logger.debug("Sent SIGHUP to PID %d", self.reverse_ssh_pid)
         except OSError:
             pass
 
@@ -237,8 +241,8 @@ class TunnelMachine(object):
 
         self._kill_reverse_ssh()
 
-        logger.info("Shutting down tunnel (please wait)")
-        logger.debug("Tunnel ID: %s" % self.id)
+        logger.info("Shutting down tunnel host (please wait)")
+        logger.debug("Tunnel host ID: %s" % self.id)
 
         doc = self._get_delete_doc(self.url)
         assert doc.get('ok')
@@ -250,10 +254,10 @@ class TunnelMachine(object):
             if status == "terminated":
                 break
             if status != previous_status:
-                logger.info("Tunnel is %s .." % status)
+                logger.info("Tunnel host is %s .." % status)
             previous_status = status
             time.sleep(REST_POLL_WAIT)
-        logger.info("Tunnel is shutdown")
+        logger.info("Tunnel host is shutdown")
         self.is_shutdown = True
 
     # Make us usable with contextlib.closing
@@ -264,9 +268,9 @@ class TunnelMachine(object):
         if doc.get('Status') == "running":
             return
         raise TunnelMachineError(
-            "Tunnel is no longer running. It may have been shutdown via the "
-            "website or by another tunnel script requesting these domains: %s"
-            % list(self.domains))
+            "The tunnel host is no longer running. It may have been shutdown "
+            "via the website or by another tunnel script requesting these "
+            "domains: %s" % list(self.domains))
 
 
 class HealthCheckFail(Exception):
@@ -340,7 +344,7 @@ class ReverseSSH(object):
                    self._dash_Rs, self.tunnel.host))
 
     def get_expect_script(self):
-        return (
+        script = (
             "set timeout -1;"
             "spawn ssh-keygen -q -R %s;" % self.tunnel.host +
             "spawn ssh -q -p 22 -l %s -o ServerAliveInterval=%s -N %s %s;"
@@ -348,8 +352,13 @@ class ReverseSSH(object):
                    self._dash_Rs, self.tunnel.host) +
             'expect \\"Are you sure you want to continue connecting'
             ' (yes/no)?\\";send -- yes\\r;'
-            "expect *password:;send -- %s\\r;" % self.tunnel.password +
-            "wait")
+            "expect *password:;send -- %s\\r;" % self.tunnel.password)
+        if is_openbsd:
+            # unfortunately, this makes stdout get ugly
+            script += "interact"
+        else:
+            script += "wait"
+        return script
 
     def _start_reverse_ssh(self):
         logger.info("Starting SSH process ..")
@@ -359,11 +368,12 @@ class ReverseSSH(object):
             cmd = 'exec expect -c "%s"' % self.get_expect_script()
 
         # start ssh process
-        devnull = open(os.devnull)
+        _stdout = open(os.devnull)
+        if is_openbsd:
+            _stdout = tempfile.TemporaryFile()
         stderr_tmp = tempfile.TemporaryFile()
-        #logger.debug("running cmd: %s" % cmd)
         reverse_ssh = subprocess.Popen(
-            cmd, shell=True, stdout=devnull, stderr=stderr_tmp)
+            cmd, shell=True, stdout=_stdout, stderr=stderr_tmp)
         self.tunnel.reverse_ssh_pid = reverse_ssh.pid
         time.sleep(3)  # hack: some startup time
 
@@ -389,7 +399,7 @@ class ReverseSSH(object):
             time.sleep(1)
 
         # ssh process has exited
-        devnull.close()
+        _stdout.close()
         stderr_tmp.seek(0)
         reverse_ssh_stderr = stderr_tmp.read().strip()
         stderr_tmp.close()
@@ -470,7 +480,7 @@ def check_version():
         sys.stderr.write("%s\n" % update_msg)
 
 
-def setup_logging(logfile=None, quiet=False, debug=False):
+def setup_logging(logfile=None, quiet=False):
     logger.setLevel(logging.DEBUG)
 
     if not quiet:
@@ -480,11 +490,11 @@ def setup_logging(logfile=None, quiet=False, debug=False):
         logger.addHandler(stdout)
 
     if logfile:
-        if debug and not quiet:
+        if not quiet:
             print "* Debug messages will be sent to %s" % logfile
         fileout = logging.handlers.RotatingFileHandler(
             filename=logfile, maxBytes=128 * 1024, backupCount=8)
-        fileout.setLevel((logging.INFO, logging.DEBUG)[bool(debug)])
+        fileout.setLevel(logging.DEBUG)
         fileout.setFormatter(logging.Formatter(
             "%(asctime)s - %(name)s:%(lineno)d - %(levelname)s - %(message)s"))
         logger.addHandler(fileout)
@@ -545,8 +555,6 @@ Performance tip:
     op.add_option_group(og)
 
     og = optparse.OptionGroup(op, "Script debugging options")
-    og.add_option("--debug", action="store_true", default=False,
-                  help="Send debugging messages to the logfile")
     og.add_option("--rest-url", default="https://saucelabs.com/rest",
                   help="[%default]")
     op.add_option_group(og)
@@ -688,7 +696,7 @@ def main():
         raise SystemExit(1)
 
     options = get_options()
-    setup_logging(options.logfile, options.quiet, options.debug)
+    setup_logging(options.logfile, options.quiet)
 
     # log the options
     _ops = dict(options.__dict__)
