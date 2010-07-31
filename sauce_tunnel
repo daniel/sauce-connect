@@ -35,7 +35,7 @@ except ImportError:
     import simplejson as json  # Python 2.5 dependency
 
 NAME = "sauce_tunnel"
-BUILD = 10
+BUILD = 11
 PRODUCT_NAME = u"Sauce Tunnel"
 VERSIONS_URL = "http://saucelabs.com/versions.json"
 
@@ -86,7 +86,7 @@ class TunnelMachine(object):
         self.metadata.update(dict(ScriptName=NAME, ScriptBuild=BUILD,
                                   Platform=platform.platform()))
 
-        self.reverse_ssh_pid = None
+        self.reverse_ssh = None
         self.is_shutdown = False
         self.base_url = "%(rest_url)s/%(user)s/tunnels" % locals()
         self.rest_host = self._host_search(rest_url).group(1)
@@ -226,20 +226,12 @@ class TunnelMachine(object):
         self.host = doc['Host']
         logger.info("Tunnel host is running at %s" % self.host)
 
-    def _kill_reverse_ssh(self):
-        if is_windows or not self.reverse_ssh_pid:
-            return
-        try:
-            os.kill(self.reverse_ssh_pid, signal.SIGHUP)
-            logger.debug("Sent SIGHUP to PID %d", self.reverse_ssh_pid)
-        except OSError:
-            pass
-
     def shutdown(self):
         if self.is_shutdown:
             return
 
-        self._kill_reverse_ssh()
+        if self.reverse_ssh:
+            self.reverse_ssh.stop()
 
         logger.info("Shutting down tunnel host (please wait)")
         logger.debug("Tunnel host ID: %s" % self.id)
@@ -331,6 +323,9 @@ class ReverseSSH(object):
         self.ports = ports
         self.tunnel_ports = tunnel_ports
 
+        self.proc = None
+        self.readyfile = None
+
     @property
     def _dash_Rs(self):
         dash_Rs = ""
@@ -360,7 +355,7 @@ class ReverseSSH(object):
             script += "wait"
         return script
 
-    def _start_reverse_ssh(self):
+    def _start_reverse_ssh(self, readyfile=None):
         logger.info("Starting SSH process ..")
         if is_windows:
             cmd = "echo 'n' | %s" % self.get_plink_command()
@@ -372,10 +367,10 @@ class ReverseSSH(object):
         if is_openbsd:
             _stdout = tempfile.TemporaryFile()
         stderr_tmp = tempfile.TemporaryFile()
-        reverse_ssh = subprocess.Popen(
+        self.proc = subprocess.Popen(
             cmd, shell=True, stdout=_stdout, stderr=stderr_tmp)
-        self.tunnel.reverse_ssh_pid = reverse_ssh.pid
-        time.sleep(3)  # hack: some startup time
+        self.tunnel.reverse_ssh = self  # BUG: circular ref
+        time.sleep(3)  # HACK: some startup time
 
         # ssh process is running
         announced_running = False
@@ -384,7 +379,7 @@ class ReverseSSH(object):
             fail_msg="!! Your tests may fail because your network can not get "
                      "to the tunnel host (%s:%d)." % (self.tunnel.host, 22))
         start_time = int(time.time())
-        while reverse_ssh.poll() is None:
+        while self.proc.poll() is None:
             now = int(time.time())
             if (now - start_time) % HEALTH_CHECK_INTERVAL == 0:
                 self.tunnel.check_running()
@@ -395,6 +390,10 @@ class ReverseSSH(object):
                     raise ReverseSSHError(e)
             if not announced_running:
                 logger.info("SSH is running. You may start your tests.")
+                if readyfile:
+                    self.readyfile = readyfile
+                    f = open(readyfile, 'w')
+                    f.close()
                 announced_running = True
             time.sleep(1)
 
@@ -403,26 +402,46 @@ class ReverseSSH(object):
         stderr_tmp.seek(0)
         reverse_ssh_stderr = stderr_tmp.read().strip()
         stderr_tmp.close()
-        if reverse_ssh.returncode != 0:
+        if self.proc.returncode != 0:
             logger.warning("SSH process exited with error code %d",
-                           reverse_ssh.returncode)
+                           self.proc.returncode)
         else:
             logger.info("SSH process exited (maybe due to network problems)")
         if reverse_ssh_stderr:
             logger.debug("SSH stderr was: '%s'" % reverse_ssh_stderr)
 
-        return reverse_ssh.returncode
+        return self.proc.returncode
 
-    def run(self):
+    def _rm_readyfile(self):
+        if self.readyfile and os.path.exists(self.readyfile):
+            try:
+                os.remove(self.readyfile)
+            except OSError, e:
+                logger.error("Couldn't remove %s: %s", self.readyfile, str(e))
+
+    def stop(self):
+        self._rm_readyfile()
+        if is_windows or not self.proc:
+            return
+        try:
+            os.kill(self.proc.pid, signal.SIGHUP)
+            logger.debug("Sent SIGHUP to PID %d", self.proc.pid)
+        except OSError:
+            pass
+
+    def run(self, readyfile=None):
+        clean_exit = False
         for attempt in xrange(1, RETRY_SSH_MAX + 1):
             # returncode 0 will happen due to ServerAlive checks failing.
             # this may result in a listening port forwarding nowhere, so
             # don't bother restarting the SSH connection.
             # TODO: revisit if server uses OpenSSH instead of Twisted SSH
-            if self._start_reverse_ssh() == 0:
-                return
-        raise ReverseSSHError(
-            "SSH process errored %d times (bad network?)" % attempt)
+            if self._start_reverse_ssh(readyfile) == 0:
+                clean_exit = True
+        self._rm_readyfile()
+        if not clean_exit:
+            raise ReverseSSHError(
+                "SSH process errored %d times (bad network?)" % attempt)
 
 
 def peace_out(tunnel=None, returncode=0):
@@ -551,7 +570,10 @@ Performance tip:
              " If you know for sure _all_ your tests use something like"
              " http://site.test:8080/ then set this 8080.")
     og.add_option("--logfile", default=logfile,
-          help="Name of the logfile to write to. [%default]")
+          help="Path of the logfile to write to. [%default]")
+    og.add_option("--readyfile",
+                  help="Path of the file to drop when the tunnel is ready "
+                       "for tests to run. By default, no file is dropped.")
     op.add_option_group(og)
 
     og = optparse.OptionGroup(op, "Script debugging options")
@@ -681,7 +703,7 @@ def _run(options):
 
     ssh = ReverseSSH(tunnel, options.host, options.ports, options.tunnel_ports)
     try:
-        ssh.run()
+        ssh.run(options.readyfile)
     except (ReverseSSHError, TunnelMachineError), e:
         logger.error(e)
     peace_out(tunnel)  # exits
