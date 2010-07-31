@@ -35,7 +35,7 @@ except ImportError:
     import simplejson as json  # Python 2.5 dependency
 
 NAME = "sauce_tunnel"
-BUILD = 11
+BUILD = 12
 PRODUCT_NAME = u"Sauce Tunnel"
 VERSIONS_URL = "http://saucelabs.com/versions.json"
 
@@ -83,8 +83,11 @@ class TunnelMachine(object):
         self.password = password
         self.domains = set(domains)
         self.metadata = dict(metadata) if metadata else dict()
-        self.metadata.update(dict(ScriptName=NAME, ScriptBuild=BUILD,
-                                  Platform=platform.platform()))
+        self.metadata.update(dict(
+            ScriptName=NAME,
+            ScriptBuild=BUILD,
+            Platform=platform.platform(),
+            PythonVersion=platform.python_version(), ))
 
         self.reverse_ssh = None
         self.is_shutdown = False
@@ -621,7 +624,7 @@ Performance tip:
 
 class MissingDependenciesError(Exception):
 
-    aptitude_map = dict(ssh="openssh-client", expect="expect")
+    deb_pkg = dict(ssh="openssh-client", expect="expect")
 
     def __init__(self, dependency, included=False):
         self.dependency = dependency
@@ -635,12 +638,14 @@ class MissingDependenciesError(Exception):
                     "contact help@saucelabs.com.")
 
         msg += " Please install it or contact\nhelp@saucelabs.com for help."
-        if (not self.included
-            and platform.linux_distribution()[0].lower()
-                in ['ubuntu', 'debian']
-            and self.aptitude_map.get(self.dependency)):
+        try:
+            linux_distro = platform.linux_distribution
+        except AttributeError:  # Python 2.5
+            linux_distro = platform.dist
+        if linux_distro()[0].lower() in ['ubuntu', 'debian']:
+            if self.dependency in self.deb_pkg:
                 msg += ("\n\nTo install: sudo aptitude install %s"
-                        % self.aptitude_map[self.dependency])
+                        % self.deb_pkg[self.dependency])
         return msg
 
 
