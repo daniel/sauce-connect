@@ -1,3 +1,8 @@
+2010-07-31  1.0-build13  Sauce Labs <help@saucelabs.com>
+
+	* Fixed stdout issue on OpenBSD.
+	* Made ssh-keygen processes exit after they run.
+
 2010-07-30  1.0-build12  Sauce Labs <help@saucelabs.com>
 
 	* Fixed error occuring under Python 2.5.

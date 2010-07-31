@@ -35,7 +35,7 @@ except ImportError:
     import simplejson as json  # Python 2.5 dependency
 
 NAME = "sauce_tunnel"
-BUILD = 12
+BUILD = 13
 PRODUCT_NAME = u"Sauce Tunnel"
 VERSIONS_URL = "http://saucelabs.com/versions.json"
 
@@ -342,20 +342,21 @@ class ReverseSSH(object):
                    self._dash_Rs, self.tunnel.host))
 
     def get_expect_script(self):
+        wait = "wait"
+        if is_openbsd:  # using 'wait;' hangs the script on OpenBSD
+            wait = "wait -nowait;sleep 1"  # hack
+
+        host_ip = socket.gethostbyname(self.tunnel.host)
         script = (
-            "set timeout -1;"
-            "spawn ssh-keygen -q -R %s;" % self.tunnel.host +
+            "spawn ssh-keygen -q -R %s;%s;" % (self.tunnel.host, wait) +
+            "spawn ssh-keygen -q -R %s;%s;" % (host_ip, wait) +
             "spawn ssh -q -p 22 -l %s -o ServerAliveInterval=%s -N %s %s;"
                 % (self.tunnel.user, HEALTH_CHECK_INTERVAL,
                    self._dash_Rs, self.tunnel.host) +
             'expect \\"Are you sure you want to continue connecting'
-            ' (yes/no)?\\";send -- yes\\r;'
-            "expect *password:;send -- %s\\r;" % self.tunnel.password)
-        if is_openbsd:
-            # unfortunately, this makes stdout get ugly
-            script += "interact"
-        else:
-            script += "wait"
+            ' (yes/no)?\\";send yes\\r;'
+            "expect *password:;send -- %s\\r;" % self.tunnel.password +
+            "expect -timeout -1 timeout")
         return script
 
     def _start_reverse_ssh(self, readyfile=None):
@@ -366,12 +367,10 @@ class ReverseSSH(object):
             cmd = 'exec expect -c "%s"' % self.get_expect_script()
 
         # start ssh process
-        _stdout = open(os.devnull)
-        if is_openbsd:
-            _stdout = tempfile.TemporaryFile()
+        devnull = open(os.devnull)
         stderr_tmp = tempfile.TemporaryFile()
         self.proc = subprocess.Popen(
-            cmd, shell=True, stdout=_stdout, stderr=stderr_tmp)
+            cmd, shell=True, stdout=devnull, stderr=stderr_tmp)
         self.tunnel.reverse_ssh = self  # BUG: circular ref
         time.sleep(3)  # HACK: some startup time
 
@@ -401,7 +400,7 @@ class ReverseSSH(object):
             time.sleep(1)
 
         # ssh process has exited
-        _stdout.close()
+        devnull.close()
         stderr_tmp.seek(0)
         reverse_ssh_stderr = stderr_tmp.read().strip()
         stderr_tmp.close()
