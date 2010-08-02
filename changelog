@@ -1,43 +1,43 @@
 2010-07-31  1.0-build13  Sauce Labs <help@saucelabs.com>
 
-	* Fixed stdout issue on OpenBSD.
-	* Made ssh-keygen processes exit after they run.
+    * Fixed stdout issue on OpenBSD.
+    * Made ssh-keygen processes exit after they run.
 
 2010-07-30  1.0-build12  Sauce Labs <help@saucelabs.com>
 
-	* Fixed error occuring under Python 2.5.
-	* Include Python version in metadata.
+    * Fixed error occuring under Python 2.5.
+    * Include Python version in metadata.
 
 2010-07-30  1.0-build11  Sauce Labs <help@saucelabs.com>
 
-	* Added --readyfile option.
+    * Added --readyfile option.
 
 2010-07-29  1.0-build10  Sauce Labs <help@saucelabs.com>
 
-	* Fix to expect script to work on OpenBSD.
-	* Always log debug messages to file. Removed --debug option.
-	* Clarify booting of the tunnel host.
+    * Fix to expect script to work on OpenBSD.
+    * Always log debug messages to file. Removed --debug option.
+    * Clarify booting of the tunnel host.
 
 2010-07-23  1.0-build9  Sauce Labs <help@saucelabs.com>
 
-	* Check for ssh and expect on startup.
+    * Check for ssh and expect on startup.
 
 2010-07-22  1.0-build8  Sauce Labs <help@saucelabs.com>
 
-	* Fix Traceback when no domains given.
-	* Re-add simplejson library into the unix directory.
+    * Fix Traceback when no domains given.
+    * Re-add simplejson library into the unix directory.
 
 2010-07-19  1.0-build7  Sauce Labs <help@saucelabs.com>
 
-	* Check that domains don't contain '/' (e.g., URL used).
+    * Check that domains don't contain '/' (e.g., URL used).
 
 2010-07-16  1.0-build6  Sauce Labs <help@saucelabs.com>
 
-	* Added README for unix regarding the dependency on Expect.
-	* Stripped SSH error output before printing in DEBUG mode.
+    * Added README for unix regarding the dependency on Expect.
+    * Stripped SSH error output before printing in DEBUG mode.
 
 2010-07-16  1.0-build5  Sauce Labs <help@saucelabs.com>
 
-	* Exit with code 1 on errors.
-	* In debug mode, log options.
+    * Exit with code 1 on errors.
+    * In debug mode, log options.
     * Added brief windows README.
