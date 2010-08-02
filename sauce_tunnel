@@ -35,7 +35,7 @@ except ImportError:
     import simplejson as json  # Python 2.5 dependency
 
 NAME = "sauce_tunnel"
-BUILD = 13
+BUILD = 14
 PRODUCT_NAME = u"Sauce Tunnel"
 VERSIONS_URL = "http://saucelabs.com/versions.json"
 
@@ -696,7 +696,7 @@ def _run(options):
         try:
             tunnel.ready_wait()
             break
-        except TunnelMachineBootError, e:
+        except TunnelMachineError, e:
             logger.warning(e)
             if attempt < RETRY_BOOT_MAX:
                 logger.info("Requesting new tunnel")
