@@ -610,6 +610,8 @@ Performance tip:
             raise SystemExit(1)
 
     # check for '/' in any domain names (might be a URL)
+    # TODO: domain is not an IP
+    # TODO: check domain uses a dot and a tld of 2 chars or more
     if [dom for dom in options.domains if '/' in dom]:
         sys.stderr.write(
               "Error: Domain contains illegal character '/' in it.\n")
