@@ -1,3 +1,8 @@
+??????????  1.0-build14  Sauce Labs <help@saucelabs.com>
+
+    * More reliable and more efficient REST auth.
+    * Minor fix for uncaught exception.
+
 2010-07-31  1.0-build13  Sauce Labs <help@saucelabs.com>
 
     * Fixed stdout issue on OpenBSD.

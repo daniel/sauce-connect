@@ -47,6 +47,7 @@ REST_POLL_WAIT = 3
 RETRY_SSH_MAX = 4
 HEALTH_CHECK_INTERVAL = 15
 HEALTH_CHECK_FAIL = 5 * 60  # no good check after this amount of time == fail
+SIGNALS_RECV_MAX = 4  # used with --allow-unclean-exit
 
 is_windows = platform.system().lower() == "windows"
 is_openbsd = platform.system().lower() == "openbsd"
@@ -94,9 +95,9 @@ class TunnelMachine(object):
         self.base_url = "%(rest_url)s/%(user)s/tunnels" % locals()
         self.rest_host = self._host_search(rest_url).group(1)
         self.basic_auth_header = {"Authorization": "Basic %s" %
-                                 ("%s:%s" % (user, password)).encode("base64")}
+            ("%s:%s" % (user, password)).encode("base64").strip()}
 
-        self._set_urlopen(rest_url, user, password)
+        self._set_urlopen(user, password)
 
         for attempt in xrange(1, RETRY_PROVISION_MAX):
             try:
@@ -109,13 +110,12 @@ class TunnelMachine(object):
                         "!! Could not provision tunnel host. Please contact "
                         "help@saucelabs.com.")
 
-    def _set_urlopen(self, url, user, password):
-        # make http auth support Just Work for GET/POST
-        password_mgr = urllib2.HTTPPasswordMgrWithDefaultRealm()
-        password_mgr.add_password(realm=None, uri=url,
-                                  user=user, passwd=password)
-        auth_handler = urllib2.HTTPBasicAuthHandler(password_mgr)
-        opener = urllib2.build_opener(auth_handler)
+    def _set_urlopen(self, user, password):
+        # always send Basic Auth header for GET and POST
+        # NOTE: we directly construct the header because it is more reliable
+        #   and more efficient than HTTPBasicAuthHandler and we always need it
+        opener = urllib2.build_opener()
+        opener.addheaders = self.basic_auth_header.items()
         self.urlopen = opener.open
 
     # decorator
@@ -454,15 +454,22 @@ def peace_out(tunnel=None, returncode=0):
     raise SystemExit(returncode)
 
 
-def setup_signal_handler(tunnel):
+def setup_signal_handler(tunnel, options):
+    signal_count = defaultdict(int)
 
     def sig_handler(signum, frame):
-        logger.info("Received signal %d" % signum)
+        if options.allow_unclean_exit:
+            signal_count[signum] += 1
+            if signal_count[signum] > SIGNALS_RECV_MAX:
+                logger.info("Received signal %d too many times (%d). Making "
+                            "unclean exit now!", signum, signal_count[signum])
+                raise SystemExit(1)
+        logger.info("Received signal %d", signum)
         peace_out(tunnel)  # exits
 
     # TODO: ?? remove SIGTERM when we implement tunnel leases
     if is_windows:
-        # TODO: What do these Windows signals mean?
+        # TODO: What do these Windows signals really mean?
         supported_signals = ["SIGABRT", "SIGBREAK", "SIGINT", "SIGTERM"]
     else:
         supported_signals = ["SIGHUP", "SIGINT", "SIGQUIT", "SIGTERM"]
@@ -581,6 +588,7 @@ Performance tip:
     og = optparse.OptionGroup(op, "Script debugging options")
     og.add_option("--rest-url", default="https://saucelabs.com/rest",
                   help="[%default]")
+    og.add_option("--allow-unclean-exit", action="store_true", default=False)
     op.add_option_group(og)
 
     (options, args) = op.parse_args()
@@ -694,7 +702,7 @@ def _run(options):
         except TunnelMachineError, e:
             logger.error(e)
             peace_out(returncode=1)  # exits
-        setup_signal_handler(tunnel)
+        setup_signal_handler(tunnel, options)
         try:
             tunnel.ready_wait()
             break
