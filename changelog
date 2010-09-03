@@ -1,4 +1,4 @@
-??????????  1.0-build14  Sauce Labs <help@saucelabs.com>
+2010-09-01  1.0-build14  Sauce Labs <help@saucelabs.com>
 
     * More reliable and more efficient REST auth.
     * Minor fix for uncaught exception.
