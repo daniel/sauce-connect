@@ -35,7 +35,7 @@ except ImportError:
     import simplejson as json  # Python 2.5 dependency
 
 NAME = "sauce_tunnel"
-BUILD = 14
+BUILD = 15
 PRODUCT_NAME = u"Sauce Tunnel"
 VERSIONS_URL = "http://saucelabs.com/versions.json"
 
@@ -83,12 +83,7 @@ class TunnelMachine(object):
         self.user = user
         self.password = password
         self.domains = set(domains)
-        self.metadata = dict(metadata) if metadata else dict()
-        self.metadata.update(dict(
-            ScriptName=NAME,
-            ScriptBuild=BUILD,
-            Platform=platform.platform(),
-            PythonVersion=platform.python_version(), ))
+        self.metadata = metadata or dict()
 
         self.reverse_ssh = None
         self.is_shutdown = False
@@ -383,6 +378,9 @@ class ReverseSSH(object):
         start_time = int(time.time())
         while self.proc.poll() is None:
             now = int(time.time())
+            if not announced_running:
+                # guarantee we health check on first iteration
+                now = start_time
             if (now - start_time) % HEALTH_CHECK_INTERVAL == 0:
                 self.tunnel.check_running()
                 try:
@@ -681,8 +679,23 @@ def _run(options):
         print "|  Have questions or need help with Sauce Labs' tunnels?  |"
         print "|  Contact us: help@saucelabs.com                         |"
         print "-----------------------------------------------------------"
-
     logger.info("/ Starting \\")
+    logger.info("%s build %d" % (PRODUCT_NAME, BUILD))
+
+    # log the options
+    _ops = dict(options.__dict__)
+    del _ops['api_key']  # no need to log the API key
+    logger.debug("options: %s" % _ops)
+
+    metadata = dict(ScriptName=NAME,
+                    ScriptBuild=BUILD,
+                    Platform=platform.platform(),
+                    PythonVersion=platform.python_version(),
+                    OwnerHost=options.host,
+                    OwnerPorts=options.ports,
+                    Ports=options.tunnel_ports, )
+    logger.debug("metadata: %s" % metadata)
+
     logger.info("Forwarding: %s:%s -> %s:%s",
                 options.domains, options.tunnel_ports,
                 options.host, options.ports)
@@ -693,8 +706,6 @@ def _run(options):
                 "fail while the server is unreachable.")
     HealthChecker(options.host, options.ports, fail_msg=fail_msg).check()
 
-    metadata = dict(OwnerHost=options.host, OwnerPorts=options.ports,
-                    Ports=options.tunnel_ports)
     for attempt in xrange(1, RETRY_BOOT_MAX + 1):
         try:
             tunnel = TunnelMachine(options.rest_url, options.user,
@@ -733,11 +744,6 @@ def main():
 
     options = get_options()
     setup_logging(options.logfile, options.quiet)
-
-    # log the options
-    _ops = dict(options.__dict__)
-    del _ops['api_key']  # no need to log the API key
-    logger.debug("options: %s" % _ops)
 
     try:
         _run(options)
