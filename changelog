@@ -1,3 +1,8 @@
+??????????  1.0-build15  Sauce Labs <help@saucelabs.com>
+
+    * Guarantee first SSH port health check runs early.
+    * Log some extra debug info to the debug log.
+
 2010-09-01  1.0-build14  Sauce Labs <help@saucelabs.com>
 
     * More reliable and more efficient REST auth.
