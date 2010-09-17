@@ -29,6 +29,7 @@ prebuild: clean
 
 distfiles:
 	cp changelog Output/Sauce-Connect
+	cp LICENSE Output/Sauce-Connect
 
 windows: prebuild distfiles plink.exe py2exe
 	cp -r windows/* Output/Sauce-Connect
