@@ -27,7 +27,7 @@ prebuild: clean
 	test -d Output/Sauce-Connect || mkdir -p Output/Sauce-Connect
 
 distfiles:
-	cp -X changelog Output/Sauce-Connect
+	cp changelog Output/Sauce-Connect
 
 windows: prebuild distfiles plink.exe py2exe
 	cp -rX windows/* Output/Sauce-Connect
@@ -36,9 +36,9 @@ windows: prebuild distfiles plink.exe py2exe
 	cd Output; zip -mrT Sauce-Connect-1.0-$(build)-$@.zip Sauce-Connect
 
 unix: prebuild distfiles simplejson
-	cp -rX unix/* Output/Sauce-Connect
-	cp -rX cache/simplejson-2.1.1/simplejson Output/Sauce-Connect
-	cp -X sauce_connect.py Output/Sauce-Connect/sauce_connect
+	cp -r unix/* Output/Sauce-Connect
+	cp -r cache/simplejson-2.1.1/simplejson Output/Sauce-Connect
+	cp sauce_connect.py Output/Sauce-Connect/sauce_connect
 	cd Output; zip -mrT Sauce-Connect-1.0-$(build)-$@.zip Sauce-Connect
 
 plink.exe:
