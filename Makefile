@@ -3,9 +3,10 @@
 # Windows:
 # * wxPython (http://wxpython.org)
 # * py2exe (http://www.py2exe.org/)
-# * A Unix like environment with make, rm, cp and curl
-# 	- I'm using http://code.google.com/p/msysgit/
-#   - For this Makefile to work, you'll need Python and Inno Setup in your path
+# * A Unix like environment with git, make, rm, cp, curl, zip and unzip
+# 	- I'm using http://code.google.com/p/msysgit/ (had to add make, zip and unzip by hand)
+#   - For this Makefile to work, you'll need Python in your path
+#
 # Unix:
 # * nothing :)
 
