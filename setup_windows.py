@@ -15,9 +15,11 @@ SCRIPTS = (
 
 options = {
            'dll_excludes': [ "mswsock.dll", "powrprof.dll" ],
+           'bundle_files': 1,
           }
 
 setup(
     console = [ script(path, name) for path, name in SCRIPTS ],
-    options = {"py2exe": options}
+    options = {"py2exe": options},
+    zipfile = None,
 )
