@@ -34,9 +34,9 @@ try:
 except ImportError:
     import simplejson as json  # Python 2.5 dependency
 
-NAME = "sauce_tunnel"
+NAME = "sauce_connect"
 BUILD = 15
-PRODUCT_NAME = u"Sauce Tunnel"
+PRODUCT_NAME = u"Sauce Connect"
 VERSIONS_URL = "http://saucelabs.com/versions.json"
 
 RETRY_PROVISION_MAX = 4
@@ -259,7 +259,7 @@ class TunnelMachine(object):
             return
         raise TunnelMachineError(
             "The tunnel host is no longer running. It may have been shutdown "
-            "via the website or by another tunnel script requesting these "
+            "via the website or by another Sauce Connect script requesting these "
             "domains: %s" % list(self.domains))
 
 
@@ -501,7 +501,7 @@ def check_version():
         logger.info(failed_msg)
         return
     if BUILD < latest_build:
-        update_msg = "** Please update Sauce Tunnel: %s" % download_url
+        update_msg = "** Please update Sauce Connect: %s" % download_url
         logger.warning(update_msg)
         sys.stderr.write("%s\n" % update_msg)
 
@@ -675,10 +675,10 @@ def check_dependencies():
 
 def _run(options):
     if not options.quiet:
-        print ".---------------------------------------------------------."
-        print "|  Have questions or need help with Sauce Labs' tunnels?  |"
-        print "|  Contact us: help@saucelabs.com                         |"
-        print "-----------------------------------------------------------"
+        print ".---------------------------------------------------."
+        print "|  Have questions or need help with Sauce Connect?  |"
+        print "|  Contact us: http://saucelabs.com/forums          |"
+        print "-----------------------------------------------------"
     logger.info("/ Starting \\")
     logger.info("%s build %d" % (PRODUCT_NAME, BUILD))
 

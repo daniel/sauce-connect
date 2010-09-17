@@ -6,8 +6,8 @@ if [ -z "$build" ]; then
     exit 1
 fi
 prevbuild=$(($build - 1))
-dest="Sauce-Tunnel-1.0-build$build"
-prevdest="Sauce-Tunnel-1.0-build$prevbuild"
+dest="Sauce-Connect-1.0-build$build"
+prevdest="Sauce-Connect-1.0-build$prevbuild"
 if ! [ -d "$prevdest" ]; then
     echo "We need a copy of the previous build. Grab the latest zip from"
     echo "the website and unzip it here. We expect it to unzip as:"
@@ -21,7 +21,7 @@ cp -X changelog $dest
 
 cp -aX unix $dest
 cp -aX $prevdest/unix/simplejson $dest/unix
-cp -X sauce_tunnel $dest/unix
+cp -X sauce_connect $dest/unix
 
 cp -aX windows $dest
 cp -aX $prevdest/windows/plink $dest/windows
