@@ -30,7 +30,7 @@ distfiles:
 	cp changelog Output/Sauce-Connect
 
 windows: prebuild distfiles plink.exe py2exe
-	cp -rX windows/* Output/Sauce-Connect
+	cp -r windows/* Output/Sauce-Connect
 	mkdir Output/Sauce-Connect/plink
 	cp cache/plink.exe Output/Sauce-Connect/plink
 	cd Output; zip -mrT Sauce-Connect-1.0-$(build)-$@.zip Sauce-Connect
