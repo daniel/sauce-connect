@@ -33,16 +33,19 @@ windows: prebuild distfiles plink.exe py2exe
 	cp -r windows/* Output/Sauce-Connect
 	mkdir Output/Sauce-Connect/plink
 	cp cache/plink.exe Output/Sauce-Connect/plink
+	cp cache/license.html Output/Sauce-Connect/plink
 	cd Output; zip -mrT Sauce-Connect-1.0-$(build)-$@.zip Sauce-Connect
 
 unix: prebuild distfiles simplejson
 	cp -r unix/* Output/Sauce-Connect
 	cp -r cache/simplejson-2.1.1/simplejson Output/Sauce-Connect
+	cp cache/simplejson-2.1.1/LICENSE.txt Output/Sauce-Connect/simplejson
 	cp sauce_connect.py Output/Sauce-Connect/sauce_connect
 	cd Output; zip -mrT Sauce-Connect-1.0-$(build)-$@.zip Sauce-Connect
 
 plink.exe:
 	test -s cache/$@ || curl -L -o cache/$@ http://the.earth.li/~sgtatham/putty/latest/x86/plink.exe 
+	test -s cache/license.html || curl -L -o cache/license.html http://www.chiark.greenend.org.uk/~sgtatham/putty/licence.html
 
 py2exe:
 	python setup_windows.py py2exe
