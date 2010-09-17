@@ -9,7 +9,7 @@
 # Unix:
 # * nothing :)
 
-build = $(shell ./get_build)
+build = $(shell sh get_build)
 
 all: 
 	@echo Please specify "windows" or "unix"
