@@ -14,8 +14,8 @@ SCRIPTS = (
 )
 
 options = {
-           'dll_excludes': [ "mswsock.dll", "powrprof.dll" ],
            'bundle_files': 1,
+           'compressed': True,  # Compress library.zip,
           }
 
 setup(
