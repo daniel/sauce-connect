@@ -1,9 +1,7 @@
 #!/bin/bash
 
-if [ -z "$BUILD_NUMBER" ]; then
-    build=$(git show HEAD | head -1 | cut -d' ' -f2)
+if [ -n "$BUILD_NUMBER" ]; then
+    echo $BUILD_NUMBER
 else
-    build=$BUILD_NUMBER
+    echo $(git show HEAD | head -1 | cut -d' ' -f2)
 fi
-
-echo $build
