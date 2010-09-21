@@ -35,7 +35,8 @@ except ImportError:
     import simplejson as json  # Python 2.5 dependency
 
 NAME = "sauce_connect"
-BUILD = 15
+RELEASE = 15
+DISPLAY_VERSION = "%s release %s" % (NAME, RELEASE)
 PRODUCT_NAME = u"Sauce Connect"
 VERSIONS_URL = "http://saucelabs.com/versions.json"
 
@@ -495,13 +496,13 @@ def check_version():
         return
 
     try:
-        latest_build = int(version.partition("build")[2])
+        latest_release = int(version.partition("-r")[2])
     except (IndexError, ValueError), e:
-        logger.debug("Couldn't parse build number: %s", str(e))
+        logger.debug("Couldn't parse release number: %s", str(e))
         logger.info(failed_msg)
         return
-    if BUILD < latest_build:
-        update_msg = "** Please update Sauce Connect: %s" % download_url
+    if RELEASE < latest_release:
+        update_msg = "** Please update %s: %s" % (PRODUCT_NAME, download_url)
         logger.warning(update_msg)
         sys.stderr.write("%s\n" % update_msg)
 
@@ -549,10 +550,9 @@ Performance tip:
 """ % dict(name=NAME)
 
     usage = usage.strip()
-    version = "%s build %s" % (NAME, BUILD)
     logfile = "%s.log" % NAME
 
-    op = optparse.OptionParser(usage=usage, version=version)
+    op = optparse.OptionParser(usage=usage, version=DISPLAY_VERSION)
     op.add_option("-u", "--user", "--username",
                   help="Your Sauce Labs account name.")
     op.add_option("-k", "--api-key",
@@ -680,7 +680,8 @@ def _run(options):
         print "|  Contact us: http://saucelabs.com/forums          |"
         print "-----------------------------------------------------"
     logger.info("/ Starting \\")
-    logger.info("%s build %d" % (PRODUCT_NAME, BUILD))
+    logger.info("%s" % DISPLAY_VERSION)
+    check_version()
 
     # log the options
     _ops = dict(options.__dict__)
@@ -688,7 +689,7 @@ def _run(options):
     logger.debug("options: %s" % _ops)
 
     metadata = dict(ScriptName=NAME,
-                    ScriptBuild=BUILD,
+                    ScriptRelease=RELEASE,
                     Platform=platform.platform(),
                     PythonVersion=platform.python_version(),
                     OwnerHost=options.host,
