@@ -1,5 +1,6 @@
 ??????????  1.0-build15  Sauce Labs <help@saucelabs.com>
 
+    * Check SSH is OpenSSH
     * Guarantee first SSH port health check runs early.
     * Log some extra debug info to the debug log.
 

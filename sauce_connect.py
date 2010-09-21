@@ -633,12 +633,14 @@ class MissingDependenciesError(Exception):
 
     deb_pkg = dict(ssh="openssh-client", expect="expect")
 
-    def __init__(self, dependency, included=False):
+    def __init__(self, dependency, included=False, extra_msg=None):
         self.dependency = dependency
         self.included = included
+        self.extra_msg = extra_msg
 
     def __str__(self):
-        msg = "You are missing '%s'." % self.dependency
+        msg = ("%s\n\n" % self.extra_msg) if self.extra_msg else ""
+        msg += "You are missing '%s'." % self.dependency
         if self.included:
             return (msg + " This should have come with the zip\n"
                     "you downloaded. If you need assistance, please "
@@ -662,15 +664,25 @@ def check_dependencies():
             raise MissingDependenciesError("plink\plink.exe", included=True)
         return
 
-    # on unix
-    with open(os.devnull) as devnull:
-        for command in ["ssh -V", "expect -v"]:
+    def check(command):
+        # on unix
+        with tempfile.TemporaryFile() as output:
             try:
-                subprocess.check_call(command, shell=True, stdout=devnull,
+                subprocess.check_call(command, shell=True, stdout=output,
                                                stderr=subprocess.STDOUT)
             except subprocess.CalledProcessError:
                 dependency = command.split(" ")[0]
-                raise MissingDependenciesError(dependency, included=False)
+                raise MissingDependenciesError(dependency)
+            output.seek(0)
+            return output.read()
+
+    check("expect -v")
+
+    output = check("ssh -V")
+    if not output.startswith("OpenSSH"):
+        msg = "You have '%s' installed,\nbut %s only supports OpenSSH." % (
+              output.strip(), PRODUCT_NAME)
+        raise MissingDependenciesError("OpenSSH", extra_msg=msg)
 
 
 def _run(options):
@@ -696,6 +708,16 @@ def _run(options):
                     OwnerPorts=options.ports,
                     Ports=options.tunnel_ports, )
     logger.debug("metadata: %s" % metadata)
+
+    ssh_config_file = os.path.join(os.environ['HOME'], ".ssh", "config")
+    if os.path.exists(ssh_config_file):
+        logger.debug("Found %s" % ssh_config_file)
+
+    ssh_known_hosts = os.path.join(os.environ['HOME'], ".ssh", "known_hosts")
+    if os.path.exists(ssh_known_hosts):
+        if not os.path.isfile(ssh_known_hosts) or os.path.islink(ssh_known_hosts):
+            logger.debug("SSH known_hosts file (%s) is not a regular file "
+                         % ssh_known_hosts)
 
     logger.info("Forwarding: %s:%s -> %s:%s",
                 options.domains, options.tunnel_ports,
