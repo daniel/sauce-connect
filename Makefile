@@ -35,9 +35,9 @@ distfiles:
 
 windows: prebuild distfiles plink.exe py2exe
 	cp -r windows $(outputdir)
-	mkdir $(outputdir)/plink
-	cp cache/plink.exe $(outputdir)/plink
-	cp cache/license.html $(outputdir)/plink
+	mkdir $(outputdir)/windows/plink
+	cp cache/plink.exe $(outputdir)/windows/plink
+	cp cache/license.html $(outputdir)/windows/plink
 
 unix: prebuild distfiles simplejson
 	cp -r unix $(outputdir)
@@ -51,7 +51,7 @@ plink.exe:
 
 py2exe:
 	python setup_windows.py py2exe
-	mv dist/sauce_connect.exe $(outputdir)
+	mv dist/sauce_connect.exe $(outputdir)/windows
 
 simplejson:
 	test -s cache/simplejson-2.1.1.tar.gz || curl -L -o cache/simplejson-2.1.1.tar.gz http://pypi.python.org/packages/source/s/simplejson/simplejson-2.1.1.tar.gz
