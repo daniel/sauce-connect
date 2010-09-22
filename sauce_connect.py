@@ -484,7 +484,7 @@ def check_version():
         with closing(urllib2.urlopen(VERSIONS_URL)) as resp:
             assert resp.msg == "OK", "Got HTTP response %s" % resp.msg
             version_doc = json.loads(resp.read())
-    except (urllib2.URLError, AssertionError), e:
+    except (urllib2.URLError, AssertionError, ValueError), e:
         logger.debug("Could not check version: %s", str(e))
         logger.info(failed_msg)
         return
