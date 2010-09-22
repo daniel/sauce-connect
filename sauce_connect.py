@@ -25,6 +25,7 @@ import socket
 import time
 import platform
 import tempfile
+import string
 from collections import defaultdict
 from contextlib import closing
 from functools import wraps
@@ -496,12 +497,12 @@ def check_version():
         return
 
     try:
-        latest_release = int(version.partition("-r")[2])
+        latest = int(version.partition("-")[2].strip(string.ascii_letters))
     except (IndexError, ValueError), e:
         logger.debug("Couldn't parse release number: %s", str(e))
         logger.info(failed_msg)
         return
-    if RELEASE < latest_release:
+    if RELEASE < latest:
         update_msg = "** Please update %s: %s" % (PRODUCT_NAME, download_url)
         logger.warning(update_msg)
         sys.stderr.write("%s\n" % update_msg)

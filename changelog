@@ -1,6 +1,7 @@
-??????????  1.0-build15  Sauce Labs <help@saucelabs.com>
+2010-09-21  1.0-r15  Sauce Labs <help@saucelabs.com>
 
-    * Check SSH is OpenSSH
+    * Sauce Tunnel is now Sauce Connect!
+    * More SSH environment checks.
     * Guarantee first SSH port health check runs early.
     * Log some extra debug info to the debug log.
 
