@@ -340,8 +340,9 @@ class ReverseSSH(object):
         return dash_Rs
 
     def get_plink_command(self):
-        return ("plink\plink -l %s -pw %s -N %s %s"
-                % (self.tunnel.user, self.tunnel.password,
+        verbosity = "-v" if self.debug else ""
+        return ("plink\plink %s -l %s -pw %s -N %s %s"
+                % (verbosity, self.tunnel.user, self.tunnel.password,
                    self._dash_Rs, self.tunnel.host))
 
     def get_expect_script(self):
