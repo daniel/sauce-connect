@@ -36,7 +36,7 @@ except ImportError:
     import simplejson as json  # Python 2.5 dependency
 
 NAME = "sauce_connect"
-RELEASE = 15
+RELEASE = 16
 DISPLAY_VERSION = "%s release %s" % (NAME, RELEASE)
 PRODUCT_NAME = u"Sauce Connect"
 VERSIONS_URL = "http://saucelabs.com/versions.json"
@@ -317,14 +317,20 @@ class ReverseSSHError(Exception):
 
 class ReverseSSH(object):
 
-    def __init__(self, tunnel, host, ports, tunnel_ports):
+    def __init__(self, tunnel, host, ports, tunnel_ports, debug=False):
         self.tunnel = tunnel
         self.host = host
         self.ports = ports
         self.tunnel_ports = tunnel_ports
+        self.debug = debug
 
         self.proc = None
         self.readyfile = None
+        self.stdout_f = None
+        self.stderr_f = None
+
+        if self.debug:
+            logger.debug("ReverseSSH debugging is on.")
 
     @property
     def _dash_Rs(self):
@@ -343,12 +349,14 @@ class ReverseSSH(object):
         if is_openbsd:  # using 'wait;' hangs the script on OpenBSD
             wait = "wait -nowait;sleep 1"  # hack
 
+        verbosity = "-v" if self.debug else "-q"
         host_ip = socket.gethostbyname(self.tunnel.host)
         script = (
-            "spawn ssh-keygen -q -R %s;%s;" % (self.tunnel.host, wait) +
-            "spawn ssh-keygen -q -R %s;%s;" % (host_ip, wait) +
-            "spawn ssh -q -p 22 -l %s -o ServerAliveInterval=%s -N %s %s;"
-                % (self.tunnel.user, HEALTH_CHECK_INTERVAL,
+            "spawn ssh-keygen %s -R %s;%s;"
+                % (verbosity, self.tunnel.host, wait) +
+            "spawn ssh-keygen %s -R %s;%s;" % (verbosity, host_ip, wait) +
+            "spawn ssh %s -p 22 -l %s -o ServerAliveInterval=%s -N %s %s;"
+                % (verbosity, self.tunnel.user, HEALTH_CHECK_INTERVAL,
                    self._dash_Rs, self.tunnel.host) +
             'expect \\"Are you sure you want to continue connecting'
             ' (yes/no)?\\";send yes\\r;'
@@ -364,10 +372,13 @@ class ReverseSSH(object):
             cmd = 'exec expect -c "%s"' % self.get_expect_script()
 
         # start ssh process
-        devnull = open(os.devnull)
-        stderr_tmp = tempfile.TemporaryFile()
+        if self.debug:
+            self.stdout_f = tempfile.TemporaryFile()
+        else:
+            self.stdout_f = open(os.devnull)
+        self.stderr_f = tempfile.TemporaryFile()
         self.proc = subprocess.Popen(
-            cmd, shell=True, stdout=devnull, stderr=stderr_tmp)
+            cmd, shell=True, stdout=self.stdout_f, stderr=self.stderr_f)
         self.tunnel.reverse_ssh = self  # BUG: circular ref
         time.sleep(3)  # HACK: some startup time
 
@@ -400,19 +411,31 @@ class ReverseSSH(object):
             time.sleep(1)
 
         # ssh process has exited
-        devnull.close()
-        stderr_tmp.seek(0)
-        reverse_ssh_stderr = stderr_tmp.read().strip()
-        stderr_tmp.close()
+        self._log_output()
         if self.proc.returncode != 0:
             logger.warning("SSH process exited with error code %d",
                            self.proc.returncode)
         else:
             logger.info("SSH process exited (maybe due to network problems)")
-        if reverse_ssh_stderr:
-            logger.debug("SSH stderr was: '%s'" % reverse_ssh_stderr)
 
         return self.proc.returncode
+
+    def _log_output(self):
+        if not self.stderr_f.closed:
+            self.stderr_f.seek(0)
+            reverse_ssh_stderr = self.stderr_f.read().strip()
+            self.stderr_f.close()
+
+            if reverse_ssh_stderr:
+                logger.debug("ReverseSSH stderr was:\n%s\n" % reverse_ssh_stderr)
+
+        if not self.stdout_f.closed:
+            self.stdout_f.seek(0)
+            reverse_ssh_stdout = self.stdout_f.read().strip()
+            self.stdout_f.close()
+
+            if self.debug:
+                logger.debug("ReverseSSH stdout was:\n%s\n" % reverse_ssh_stdout)
 
     def _rm_readyfile(self):
         if self.readyfile and os.path.exists(self.readyfile):
@@ -423,6 +446,7 @@ class ReverseSSH(object):
 
     def stop(self):
         self._rm_readyfile()
+        self._log_output()
         if is_windows or not self.proc:
             return
         try:
@@ -587,6 +611,7 @@ Performance tip:
     og = optparse.OptionGroup(op, "Script debugging options")
     og.add_option("--rest-url", default="https://saucelabs.com/rest",
                   help="[%default]")
+    og.add_option("--debug-ssh", action="store_true", default=False)
     og.add_option("--allow-unclean-exit", action="store_true", default=False)
     op.add_option_group(og)
 
@@ -750,7 +775,8 @@ def _run(options):
             logger.info("** Please contact help@saucelabs.com")
             peace_out(tunnel, returncode=1)  # exits
 
-    ssh = ReverseSSH(tunnel, options.host, options.ports, options.tunnel_ports)
+    ssh = ReverseSSH(tunnel, options.host, options.ports, options.tunnel_ports,
+                     options.debug_ssh)
     try:
         ssh.run(options.readyfile)
     except (ReverseSSHError, TunnelMachineError), e:
