@@ -712,6 +712,12 @@ def check_dependencies():
         raise MissingDependenciesError("OpenSSH", extra_msg=msg)
 
 
+def _get_loggable_options(options):
+    ops = dict(options.__dict__)
+    del ops['api_key']  # no need to log the API key
+    return ops
+
+
 def _run(options):
     if not options.quiet:
         print ".---------------------------------------------------."
@@ -723,9 +729,7 @@ def _run(options):
     check_version()
 
     # log the options
-    _ops = dict(options.__dict__)
-    del _ops['api_key']  # no need to log the API key
-    logger.debug("options: %s" % _ops)
+    logger.debug("options: %s" % _get_loggable_options(options))
 
     metadata = dict(ScriptName=NAME,
                     ScriptRelease=RELEASE,
@@ -802,7 +806,8 @@ def main():
         logger.exception("Unhandled exception: %s", str(e))
         msg = "*** Please send this error to help@saucelabs.com. ***"
         logger.critical(msg)
-        sys.stderr.write("\noptions: %s\n\n%s\n" % (_ops, msg))
+        sys.stderr.write("\noptions: %s\n\n%s\n"
+                         % (_get_loggable_options(options), msg))
 
 
 if __name__ == '__main__':
