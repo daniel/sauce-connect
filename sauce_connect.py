@@ -332,6 +332,21 @@ class ReverseSSH(object):
         if self.debug:
             logger.debug("ReverseSSH debugging is on.")
 
+    def _check_dot_ssh_files(self):
+        if not os.environ.get('HOME'):
+            logger.debug("No HOME env, skipping .ssh file checks")
+            return
+
+        ssh_config_file = os.path.join(os.environ['HOME'], ".ssh", "config")
+        if os.path.exists(ssh_config_file):
+            logger.debug("Found %s" % ssh_config_file)
+
+        ssh_known_hosts = os.path.join(os.environ['HOME'], ".ssh", "known_hosts")
+        if os.path.exists(ssh_known_hosts):
+            if not os.path.isfile(ssh_known_hosts) or os.path.islink(ssh_known_hosts):
+                logger.debug("SSH known_hosts file (%s) is not a regular file "
+                             % ssh_known_hosts)
+
     @property
     def _dash_Rs(self):
         dash_Rs = ""
@@ -366,6 +381,7 @@ class ReverseSSH(object):
         return script
 
     def _start_reverse_ssh(self, readyfile=None):
+        self._check_dot_ssh_files()
         logger.info("Starting SSH process ..")
         if is_windows:
             cmd = "echo 'n' | %s" % self.get_plink_command()
@@ -739,16 +755,6 @@ def _run(options):
                     OwnerPorts=options.ports,
                     Ports=options.tunnel_ports, )
     logger.debug("metadata: %s" % metadata)
-
-    ssh_config_file = os.path.join(os.environ['HOME'], ".ssh", "config")
-    if os.path.exists(ssh_config_file):
-        logger.debug("Found %s" % ssh_config_file)
-
-    ssh_known_hosts = os.path.join(os.environ['HOME'], ".ssh", "known_hosts")
-    if os.path.exists(ssh_known_hosts):
-        if not os.path.isfile(ssh_known_hosts) or os.path.islink(ssh_known_hosts):
-            logger.debug("SSH known_hosts file (%s) is not a regular file "
-                         % ssh_known_hosts)
 
     logger.info("Forwarding: %s:%s -> %s:%s",
                 options.domains, options.tunnel_ports,
