@@ -9,6 +9,7 @@ from __future__ import with_statement
 #     * issue: windows: no os.fork()
 #     * issue: unix: null file descriptors causes Expect script to fail
 #   * Renew tunnel lease (backend not implemented)
+#   * Check tunnel machine ports are open (backend not implemented)
 #
 
 import os
