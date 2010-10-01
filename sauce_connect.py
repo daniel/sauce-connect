@@ -36,7 +36,7 @@ except ImportError:
     import simplejson as json  # Python 2.5 dependency
 
 NAME = "sauce_connect"
-RELEASE = 17
+RELEASE = 18
 DISPLAY_VERSION = "%s release %s" % (NAME, RELEASE)
 PRODUCT_NAME = u"Sauce Connect"
 VERSIONS_URL = "http://saucelabs.com/versions.json"
@@ -744,9 +744,6 @@ def _run(options):
     logger.info("%s" % DISPLAY_VERSION)
     check_version()
 
-    # log the options
-    logger.debug("options: %s" % _get_loggable_options(options))
-
     metadata = dict(ScriptName=NAME,
                     ScriptRelease=RELEASE,
                     Platform=platform.platform(),
@@ -754,12 +751,14 @@ def _run(options):
                     OwnerHost=options.host,
                     OwnerPorts=options.ports,
                     Ports=options.tunnel_ports, )
+
+    logger.debug("System is %s hours off UTC" %
+                 (- (time.timezone, time.altzone)[time.daylight] / 3600.))
+    logger.debug("options: %s" % _get_loggable_options(options))
     logger.debug("metadata: %s" % metadata)
 
-    logger.info("Forwarding: %s:%s -> %s:%s",
-                options.domains, options.tunnel_ports,
-                options.host, options.ports)
-
+    logger.info("Forwarding: %s:%s -> %s:%s", options.domains,
+                options.tunnel_ports, options.host, options.ports)
     # Initial check of forwarded ports
     fail_msg = ("!! Are you sure this machine can get to your web server on "
                 "host '%(host)s' listening on port %(port)d? Your tests will "
