@@ -51,7 +51,7 @@ REST_POLL_WAIT = 3
 RETRY_SSH_MAX = 4
 HEALTH_CHECK_INTERVAL = 15
 HEALTH_CHECK_FAIL = 5 * 60  # no good check after this amount of time == fail
-LATENCY_WARNING = 0.5  # warn, when making connections takes this long
+LATENCY_WARNING = 500  # warn, when making connections takes this many ms
 SIGNALS_RECV_MAX = 4  # used with --allow-unclean-exit
 
 is_windows = platform.system().lower() == "windows"
@@ -290,7 +290,7 @@ class HealthChecker(object):
             start_time = time.time()
             try:
                 sock.connect((self.host, port))
-                return time.time() - start_time
+                return int(1000 * (time.time() - start_time))
             except (socket.gaierror, socket.error), e:
                 logger.warning("Could not connect to %s:%s (%s)",
                                self.host, port, str(e))
@@ -305,16 +305,16 @@ class HealthChecker(object):
                 result = (self.host, port, ping_time)
 
                 if self.log_all or ping_time >= 0.2:
-                    logger.debug("Connected to %s:%s in in %0.2fs" % result)
+                    logger.debug("Connected to %s:%s in in %dms" % result)
                 if ping_time >= LATENCY_WARNING:
                     if (self.last_tcp_ping[port] is None
                         or self.last_tcp_ping[port] < LATENCY_WARNING):
                         logger.warn("Your network connection to %s:%s is very "
-                                    "slow (took %0.2fs to connect), tests will"
+                                    "slow (took %dms to connect), tests will"
                                     " take longer to run" % result)
 
                 if self.last_tcp_ping[port] is None:
-                    logger.info("Succesfully connected to %s:%s in %0.2fs" % result)
+                    logger.info("Succesfully connected to %s:%s in %dms" % result)
 
                 self.last_tcp_ping[port] = ping_time
                 continue
