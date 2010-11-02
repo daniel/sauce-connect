@@ -3,6 +3,7 @@
 from __future__ import with_statement
 
 # TODO:
+#   * ?? Use "-o StrictHostKeyChecking no"
 #   * Move to REST API v1
 #   * windows: SSH link healthcheck (PuTTY session file hack?)
 #   * Daemonizing
@@ -125,8 +126,7 @@ class TunnelMachine(object):
                 try:
                     result = f(*args, **kwargs)
                     if previous_failed:
-                        logger.info(
-                            "Connection succeeded")
+                        logger.info("Connection succeeded")
                     return result
                 except (HTTPResponseError,
                         urllib2.URLError, httplib.HTTPException,
@@ -272,43 +272,57 @@ class HealthCheckFail(Exception):
 
 class HealthChecker(object):
 
-    def __init__(self, host, ports, fail_msg=None):
+    def __init__(self, host, ports, fail_msg=None, log_all=False):
         """fail_msg can include '%(host)s' and '%(port)d'"""
         self.host = host
         self.fail_msg = fail_msg
+        self.log_all = log_all
         if not self.fail_msg:
             self.fail_msg = ("!! Your tests will fail while your network "
                              "can not get to %(host)s:%(port)d.")
         self.ports = frozenset(int(p) for p in ports)
         self.last_tcp_connect = defaultdict(time.time)
-        self.previous_failed = defaultdict(lambda: False)
+        self.last_tcp_ping = None
 
-    def _tcp_connected(self, port):
+    def _tcp_ping(self, port):
         with closing(socket.socket()) as sock:
+            start_time = time.time()
             try:
                 sock.connect((self.host, port))
-                return True
+                return time.time() - start_time
             except (socket.gaierror, socket.error), e:
                 logger.warning("Could not connect to %s:%s (%s)",
                                self.host, port, str(e))
-                return False
 
     def check(self):
+        now = time.time()
         for port in self.ports:
-            if self._tcp_connected(port):
+            ping_time = self._tcp_ping(port)
+            if ping_time is not None:
                 # TCP connection succeeded
-                self.last_tcp_connect[port] = time.time()
-                if self.previous_failed[port]:
-                    logger.info(
-                        "Succesfully connected to %s:%s" % (self.host, port))
-                self.previous_failed[port] = False
+                self.last_tcp_connect[port] = now
+                result = (self.host, port, ping_time)
+
+                if self.log_all or ping_time >= 0.2:
+                    logger.debug("Connected to %s:%s in in %0.2fs" % result)
+                if ping_time >= 0.5:
+                    if self.last_tcp_ping[port] is None or self.last_tcp_ping[port] < 0.5:
+                        logger.warn("Your network connection to %s:%s is very "
+                                    "slow (took %0.2fs to connect), tests will"
+                                    " take longer to run" % result)
+
+                if self.last_tcp_ping[port] is None:
+                    logger.info("Succesfully connected to %s:%s in %0.2fs" % result)
+
+                self.last_tcp_ping[port] = ping_time
                 continue
+
             # TCP connection failed
-            self.previous_failed[port] = True
+            self.last_tcp_ping[port] = ping_time
             logger.warning(self.fail_msg % dict(host=self.host, port=port))
-            if time.time() - self.last_tcp_connect[port] > HEALTH_CHECK_FAIL:
+            if now - self.last_tcp_connect[port] > HEALTH_CHECK_FAIL:
                 raise HealthCheckFail(
-                    "Could not connect to %s:%s for %s seconds"
+                    "Could not connect to %s:%s for over %s seconds"
                     % (self.host, port, HEALTH_CHECK_FAIL))
 
 
@@ -318,12 +332,14 @@ class ReverseSSHError(Exception):
 
 class ReverseSSH(object):
 
-    def __init__(self, tunnel, host, ports, tunnel_ports, debug=False):
+    def __init__(self, tunnel, host, ports, tunnel_ports,
+                 debug=False, log_latency=False):
         self.tunnel = tunnel
         self.host = host
         self.ports = ports
         self.tunnel_ports = tunnel_ports
         self.debug = debug
+        self.log_latency = log_latency
 
         self.proc = None
         self.readyfile = None
@@ -402,10 +418,17 @@ class ReverseSSH(object):
 
         # ssh process is running
         announced_running = False
-        forwarded_health = HealthChecker(self.host, self.ports)
+
+        # log latency to the tunnel endpoint
+        HealthChecker(host=self.tunnel.host, ports=[22], log_all=True).check()
+        # setup recurring healthchecks
+        forwarded_health = HealthChecker(self.host, self.ports,
+                                         log_all=self.log_latency)
         tunnel_health = HealthChecker(host=self.tunnel.host, ports=[22],
             fail_msg="!! Your tests may fail because your network can not get "
-                     "to the tunnel host (%s:%d)." % (self.tunnel.host, 22))
+                     "to the tunnel host (%s:%d)." % (self.tunnel.host, 22),
+            log_all=self.log_latency)
+
         start_time = int(time.time())
         while self.proc.poll() is None:
             now = int(time.time())
@@ -630,6 +653,7 @@ Performance tip:
     og.add_option("--rest-url", default="https://saucelabs.com/rest",
                   help="[%default]")
     og.add_option("--debug-ssh", action="store_true", default=False)
+    og.add_option("--log-latency", action="store_true", default=False)
     og.add_option("--allow-unclean-exit", action="store_true", default=False)
     op.add_option_group(og)
 
@@ -735,7 +759,7 @@ def _get_loggable_options(options):
     return ops
 
 
-def _run(options):
+def run(options):
     if not options.quiet:
         print ".---------------------------------------------------."
         print "|  Have questions or need help with Sauce Connect?  |"
@@ -764,7 +788,8 @@ def _run(options):
     fail_msg = ("!! Are you sure this machine can get to your web server on "
                 "host '%(host)s' listening on port %(port)d? Your tests will "
                 "fail while the server is unreachable.")
-    HealthChecker(options.host, options.ports, fail_msg=fail_msg).check()
+    HealthChecker(options.host, options.ports,
+                  fail_msg=fail_msg, log_all=True).check()
 
     for attempt in xrange(1, RETRY_BOOT_MAX + 1):
         try:
@@ -787,7 +812,7 @@ def _run(options):
             peace_out(tunnel, returncode=1)  # exits
 
     ssh = ReverseSSH(tunnel, options.host, options.ports, options.tunnel_ports,
-                     options.debug_ssh)
+                     options.debug_ssh, options.log_latency)
     try:
         ssh.run(options.readyfile)
     except (ReverseSSHError, TunnelMachineError), e:
@@ -807,7 +832,7 @@ def main():
     setup_logging(options.logfile, options.quiet)
 
     try:
-        _run(options)
+        run(options)
     except Exception, e:
         logger.exception("Unhandled exception: %s", str(e))
         msg = "*** Please send this error to help@saucelabs.com. ***"
