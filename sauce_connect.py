@@ -51,6 +51,7 @@ REST_POLL_WAIT = 3
 RETRY_SSH_MAX = 4
 HEALTH_CHECK_INTERVAL = 15
 HEALTH_CHECK_FAIL = 5 * 60  # no good check after this amount of time == fail
+LATENCY_WARNING = 0.5  # warn, when making connections takes this long
 SIGNALS_RECV_MAX = 4  # used with --allow-unclean-exit
 
 is_windows = platform.system().lower() == "windows"
@@ -305,8 +306,9 @@ class HealthChecker(object):
 
                 if self.log_all or ping_time >= 0.2:
                     logger.debug("Connected to %s:%s in in %0.2fs" % result)
-                if ping_time >= 0.5:
-                    if self.last_tcp_ping[port] is None or self.last_tcp_ping[port] < 0.5:
+                if ping_time >= LATENCY_WARNING:
+                    if (self.last_tcp_ping[port] is None
+                        or self.last_tcp_ping[port] < LATENCY_WARNING):
                         logger.warn("Your network connection to %s:%s is very "
                                     "slow (took %0.2fs to connect), tests will"
                                     " take longer to run" % result)
