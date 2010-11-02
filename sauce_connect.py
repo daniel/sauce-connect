@@ -283,7 +283,7 @@ class HealthChecker(object):
                              "can not get to %(host)s:%(port)d.")
         self.ports = frozenset(int(p) for p in ports)
         self.last_tcp_connect = defaultdict(time.time)
-        self.last_tcp_ping = None
+        self.last_tcp_ping = defaultdict(lambda: None)
 
     def _tcp_ping(self, port):
         with closing(socket.socket()) as sock:
