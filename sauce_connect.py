@@ -274,11 +274,11 @@ class HealthCheckFail(Exception):
 
 class HealthChecker(object):
 
-    def __init__(self, host, ports, fail_msg=None, log_all=False):
+    def __init__(self, host, ports, fail_msg=None, log_latency=False):
         """fail_msg can include '%(host)s' and '%(port)d'"""
         self.host = host
         self.fail_msg = fail_msg
-        self.log_all = log_all
+        self.log_latency = log_latency
         if not self.fail_msg:
             self.fail_msg = ("!! Your tests will fail while your network "
                              "can not get to %(host)s:%(port)d.")
@@ -305,14 +305,20 @@ class HealthChecker(object):
                 self.last_tcp_connect[port] = now
                 result = (self.host, port, ping_time)
 
-                if self.log_all or ping_time >= 0.2:
+                if ping_time >= self.log_latency:
                     logger.debug("Connected to %s:%s in in %dms" % result)
+
                 if ping_time >= LATENCY_WARNING:
                     if (self.last_tcp_ping[port] is None
                         or self.last_tcp_ping[port] < LATENCY_WARNING):
-                        logger.warn("Your network connection to %s:%s is very "
-                                    "slow (took %dms to connect), tests will"
-                                    " take longer to run" % result)
+                        logger.warn("High latency to %s:%s (took %dms to "
+                                    "connect); tests may run slowly" % result)
+
+                if (ping_time < (LATENCY_WARNING / 2)
+                    and self.last_tcp_ping[port]
+                    and self.last_tcp_ping[port] >= LATENCY_WARNING):
+                    logger.info("High latency to %s:%s gone (took %dms to "
+                                "connect)" % result)
 
                 if self.last_tcp_ping[port] is None:
                     logger.info("Succesfully connected to %s:%s in %dms" % result)
@@ -424,11 +430,11 @@ class ReverseSSH(object):
 
         # setup recurring healthchecks
         forwarded_health = HealthChecker(self.host, self.ports,
-                                         log_all=self.log_latency)
+                                         log_latency=self.log_latency)
         tunnel_health = HealthChecker(host=self.tunnel.host, ports=[22],
             fail_msg="!! Your tests may fail because your network can not get "
                      "to the tunnel host (%s:%d)." % (self.tunnel.host, 22),
-            log_all=self.log_latency)
+            log_latency=self.log_latency)
 
         start_time = int(time.time())
         while self.proc.poll() is None:
@@ -506,6 +512,7 @@ class ReverseSSH(object):
             # TODO: revisit if server uses OpenSSH instead of Twisted SSH
             if self._start_reverse_ssh(readyfile) == 0:
                 clean_exit = True
+            self.stop()  # make sure we've stopped
         self._rm_readyfile()
         if not clean_exit:
             raise ReverseSSHError(
@@ -660,7 +667,9 @@ Performance tip:
     og.add_option("--rest-url", default="https://saucelabs.com/rest",
                   help="[%default]")
     og.add_option("--debug-ssh", action="store_true", default=False)
-    og.add_option("--log-latency", action="store_true", default=False)
+    og.add_option("--log-latency", type=int, default=150,
+                  help="Threshold above which latency (ms) will be "
+                       "logged. [%default]")
     og.add_option("--allow-unclean-exit", action="store_true", default=False)
     op.add_option_group(og)
 
@@ -795,8 +804,8 @@ def run(options):
     fail_msg = ("!! Are you sure this machine can get to your web server on "
                 "host '%(host)s' listening on port %(port)d? Your tests will "
                 "fail while the server is unreachable.")
-    HealthChecker(options.host, options.ports,
-                  fail_msg=fail_msg, log_all=True).check()
+    HealthChecker(options.host, options.ports, fail_msg=fail_msg,
+                  log_latency=options.log_latency).check()
 
     for attempt in xrange(1, RETRY_BOOT_MAX + 1):
         try:
