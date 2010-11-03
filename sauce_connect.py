@@ -422,8 +422,6 @@ class ReverseSSH(object):
         # ssh process is running
         announced_running = False
 
-        # log latency to the tunnel endpoint
-        HealthChecker(host=self.tunnel.host, ports=[22], log_all=True).check()
         # setup recurring healthchecks
         forwarded_health = HealthChecker(self.host, self.ports,
                                          log_all=self.log_latency)
