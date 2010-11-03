@@ -512,25 +512,30 @@ class ReverseSSH(object):
                 "SSH process errored %d times (bad network?)" % attempt)
 
 
-def peace_out(tunnel=None, returncode=0):
+def peace_out(tunnel=None, returncode=0, atexit=False):
     """Shutdown the tunnel and raise SystemExit."""
     if tunnel:
         tunnel.shutdown()
-    logger.info("\ Exiting /")
-    raise SystemExit(returncode)
+    if not atexit:
+        logger.info("\ Exiting /")
+        raise SystemExit(returncode)
+    else:
+        logger.debug("--- fin ---")
 
 
 def setup_signal_handler(tunnel, options):
     signal_count = defaultdict(int)
+    signal_name = {}
 
     def sig_handler(signum, frame):
         if options.allow_unclean_exit:
             signal_count[signum] += 1
             if signal_count[signum] > SIGNALS_RECV_MAX:
-                logger.info("Received signal %d too many times (%d). Making "
-                            "unclean exit now!", signum, signal_count[signum])
+                logger.info(
+                    "Received %s too many times (%d). Making unclean "
+                    "exit now!", signal_name[signum], signal_count[signum])
                 raise SystemExit(1)
-        logger.info("Received signal %d", signum)
+        logger.info("Received signal %s", signal_name[signum])
         peace_out(tunnel)  # exits
 
     # TODO: ?? remove SIGTERM when we implement tunnel leases
@@ -539,7 +544,9 @@ def setup_signal_handler(tunnel, options):
     else:
         supported_signals = ["SIGHUP", "SIGINT", "SIGQUIT", "SIGTERM"]
     for sig in supported_signals:
-        signal.signal(getattr(signal, sig), sig_handler)
+        signum = getattr(signal, sig)
+        signal_name[signum] = sig
+        signal.signal(signum, sig_handler)
 
 
 def check_version():
@@ -799,7 +806,7 @@ def run(options):
             logger.error(e)
             peace_out(returncode=1)  # exits
         setup_signal_handler(tunnel, options)
-        atexit.register(peace_out, tunnel)
+        atexit.register(peace_out, tunnel, atexit=True)
         try:
             tunnel.ready_wait()
             break
