@@ -537,9 +537,7 @@ def setup_signal_handler(tunnel, options):
 
     # TODO: ?? remove SIGTERM when we implement tunnel leases
     if is_windows:
-        # TODO: What do these Windows signals really mean?
-        supported_signals = ['SIGABRT', 'SIGBREAK', 'SIGFPE', 'SIGILL',
-                             'SIGINT', 'SIGSEGV', 'SIGTERM']
+        supported_signals = ["SIGABRT", "SIGBREAK", "SIGINT", "SIGTERM"]
     else:
         supported_signals = ["SIGHUP", "SIGINT", "SIGQUIT", "SIGTERM"]
     for sig in supported_signals:
@@ -803,7 +801,7 @@ def run(options):
             logger.error(e)
             peace_out(returncode=1)  # exits
         setup_signal_handler(tunnel, options)
-        atexit(peace_out, tunnel)
+        atexit.register(peace_out, tunnel)
         try:
             tunnel.ready_wait()
             break
