@@ -5,12 +5,12 @@
 
 2010-09-27  1.0-r17  Sauce Labs <help@saucelabs.com>
 
-	* Fixed possible traceback during .ssh file checks.
-	* Fixed bug in traceback handler.
+    * Fixed possible traceback during .ssh file checks.
+    * Fixed bug in traceback handler.
 
 2010-09-22  1.0-r16  Sauce Labs <help@saucelabs.com>
 
-	* Added --debug-ssh option.
+    * Added --debug-ssh option.
 
 2010-09-21  1.0-r15  Sauce Labs <help@saucelabs.com>
 
