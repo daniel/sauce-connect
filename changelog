@@ -1,7 +1,7 @@
-????-??-??  1.0-r18  Sauce Labs <help@saucelabs.com>
+2010-11-04  1.0-r18  Sauce Labs <help@saucelabs.com>
 
     * Latency logging and warn about high latency connections.
-    * More aggresive cleanup on exit.
+    * More aggresive and safer cleanup on exit.
 
 2010-09-27  1.0-r17  Sauce Labs <help@saucelabs.com>
 
