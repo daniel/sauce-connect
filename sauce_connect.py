@@ -492,14 +492,16 @@ class ReverseSSH(object):
 
     def stop(self):
         self._rm_readyfile()
-        self._log_output()
-        if is_windows or not self.proc:
+        if not self.proc or self.proc.poll() is not None:  # not running, done
             return
-        try:
-            os.kill(self.proc.pid, signal.SIGHUP)
-            logger.debug("Sent SIGHUP to PID %d", self.proc.pid)
-        except OSError:
-            pass
+
+        if not is_windows:  # windows no have kill()
+            try:
+                os.kill(self.proc.pid, signal.SIGHUP)
+                logger.debug("Sent SIGHUP to PID %d", self.proc.pid)
+            except OSError:
+                pass
+        self._log_output()
 
     def run(self, readyfile=None):
         clean_exit = False
