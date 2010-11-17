@@ -838,6 +838,12 @@ def run(options):
 
 
 def main():
+    # more complicated so this works on old Python
+    pyver = float("%s.%s" % tuple(platform.python_version().split('.')[:2]))
+    if pyver < 2.5:
+        print "%s requires Python 2.5 (2006) or newer." % PRODUCT_NAME
+        raise SystemExit(1)
+
     try:
         check_dependencies()
     except MissingDependenciesError, e:
