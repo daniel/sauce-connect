@@ -211,7 +211,7 @@ class TunnelMachine(object):
                     "or value for '%s'" % key)
         self.id = doc['id']
         self.url = "%s/%s" % (self.base_url, self.id)
-        logger.debug("Provisioned tunnel host: %s" % self.id)
+        logger.info("Tunnel host is provisioned (%s)" % self.id)
 
     def ready_wait(self):
         """Wait for the machine to reach the 'running' state."""
