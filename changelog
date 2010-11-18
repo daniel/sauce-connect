@@ -1,7 +1,7 @@
-????-??-??  1.0-r19  Sauce Labs <help@saucelabs.com>
+2010-11-18  1.0-r19  Sauce Labs <help@saucelabs.com>
 
     * Check Python version at startup
-	* More metadata and show the tunnel ID to aid in debugging
+    * More metadata and show the tunnel ID to aid in debugging
 
 2010-11-04  1.0-r18  Sauce Labs <help@saucelabs.com>
 
