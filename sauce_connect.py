@@ -757,15 +757,18 @@ def check_dependencies():
                 dependency = command.split(" ")[0]
                 raise MissingDependenciesError(dependency)
             output.seek(0)
-            return output.read()
+            return output.read().strip()
 
-    check("expect -v")
+    version = {}
+    version['expect'] = check("expect -v")
 
-    output = check("ssh -V")
-    if not output.startswith("OpenSSH"):
+    version['ssh'] = check("ssh -V")
+    if not version['ssh'].startswith("OpenSSH"):
         msg = "You have '%s' installed,\nbut %s only supports OpenSSH." % (
-              output.strip(), PRODUCT_NAME)
+              version['ssh'], PRODUCT_NAME)
         raise MissingDependenciesError("OpenSSH", extra_msg=msg)
+
+    return version
 
 
 def _get_loggable_options(options):
@@ -774,7 +777,7 @@ def _get_loggable_options(options):
     return ops
 
 
-def run(options):
+def run(options, dependency_versions=None):
     if not options.quiet:
         print ".---------------------------------------------------."
         print "|  Have questions or need help with Sauce Connect?  |"
@@ -791,6 +794,8 @@ def run(options):
                     OwnerHost=options.host,
                     OwnerPorts=options.ports,
                     Ports=options.tunnel_ports, )
+    if dependency_versions:
+        metadata['DependencyVersions'] = dependency_versions
 
     logger.debug("System is %s hours off UTC" %
                  (- (time.timezone, time.altzone)[time.daylight] / 3600.))
@@ -845,7 +850,7 @@ def main():
         raise SystemExit(1)
 
     try:
-        check_dependencies()
+        dependency_versions = check_dependencies()
     except MissingDependenciesError, e:
         print "\n== Missing requirements ==\n"
         print e
@@ -855,7 +860,7 @@ def main():
     setup_logging(options.logfile, options.quiet)
 
     try:
-        run(options)
+        run(options, dependency_versions)
     except Exception, e:
         logger.exception("Unhandled exception: %s", str(e))
         msg = "*** Please send this error to help@saucelabs.com. ***"
