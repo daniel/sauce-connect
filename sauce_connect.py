@@ -590,9 +590,13 @@ def check_version():
         logger.info(failed_msg)
         return
     if RELEASE < latest:
-        update_msg = "** Please update %s: %s" % (PRODUCT_NAME, download_url)
-        logger.warning(update_msg)
-        sys.stderr.write("%s\n" % update_msg)
+        msgs = ["** This version of %s is outdated." % PRODUCT_NAME,
+                "** Please update with %s" % download_url]
+        for update_msg in msgs:
+            logger.warning(update_msg)
+        for update_msg in msgs:
+            sys.stderr.write("%s\n" % update_msg)
+        time.sleep(15)
 
 
 def setup_logging(logfile=None, quiet=False):
