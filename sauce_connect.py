@@ -144,6 +144,10 @@ class TunnelMachine(object):
                     previous_failed = True
                     logger.debug("Retrying in %ds", RETRY_REST_WAIT)
                     time.sleep(RETRY_REST_WAIT)
+                except Exception, e:
+                    raise TunnelMachineError(
+                        "An error occurred while contacting Sauce Labs REST "
+                        "API (%s). Please contact help@saucelabs.com.")
         return wrapper
 
     @_retry_rest_api
@@ -240,7 +244,12 @@ class TunnelMachine(object):
         logger.info("Shutting down tunnel host (please wait)")
         logger.debug("Tunnel host ID: %s" % self.id)
 
-        doc = self._get_delete_doc(self.url)
+        try:
+            doc = self._get_delete_doc(self.url)
+        except TunnelMachineError, e:
+            logger.warning("Unable to shut down tunnel host")
+            self.is_shutdown = True  # fuhgeddaboudit
+            return
         assert doc.get('ok')
 
         previous_status = None
