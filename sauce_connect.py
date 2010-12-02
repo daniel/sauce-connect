@@ -3,7 +3,7 @@
 from __future__ import with_statement
 
 # TODO:
-#   * detect bad domain names (e.g., IPs) and error with helpful message
+#   * better domain checking (see TODOs in get_options)
 #   * ?? Use "-o StrictHostKeyChecking no"
 #   * Move to REST API v1
 #   * windows: SSH link healthcheck (PuTTY session file hack?)
