@@ -523,6 +523,9 @@ class ReverseSSH(object):
             if self._start_reverse_ssh(readyfile) == 0:
                 clean_exit = True
                 break
+            if attempt < RETRY_SSH_MAX:
+                logger.debug("Will restart SSH in 3 seconds")
+                time.sleep(3)  # wait a bit for old connections to close
         self._rm_readyfile()
         if not clean_exit:
             raise ReverseSSHError(
