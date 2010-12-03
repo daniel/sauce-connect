@@ -522,6 +522,7 @@ class ReverseSSH(object):
             # TODO: revisit if server uses OpenSSH instead of Twisted SSH
             if self._start_reverse_ssh(readyfile) == 0:
                 clean_exit = True
+                break
         self._rm_readyfile()
         if not clean_exit:
             raise ReverseSSHError(
