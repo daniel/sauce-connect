@@ -247,7 +247,7 @@ class TunnelMachine(object):
 
         try:
             doc = self._get_delete_doc(self.url)
-        except TunnelMachineError, e:
+        except TunnelMachineError:
             logger.warning("Unable to shut down tunnel host")
             self.is_shutdown = True  # fuhgeddaboudit
             return
@@ -624,6 +624,38 @@ def setup_logging(logfile=None, quiet=False):
         logger.addHandler(fileout)
 
 
+def check_domains(domains):
+    """Display error and exit script if any requested domains are invalid."""
+
+    for dom in domains:
+        # no URLs
+        if '/' in dom:
+            sys.stderr.write(
+                "Error: Domain contains illegal character '/' in it.\n")
+            print "       Did you use a URL instead of just the domain?\n"
+            print "Examples: -d example.com -d '*.example.com' -d cdn.example.org"
+            print
+            raise SystemExit(1)
+
+        # no numerical addresses
+        if all(map(lambda c: c.isdigit() or c == '.', dom)):
+            sys.stderr.write("Error: Domain must be a hostname not an IP\n")
+            print
+            print "Examples: -d example.com -d '*.example.com' -d cdn.example.org"
+            print
+            raise SystemExit(1)
+
+        # need a dot and 2 char TLD
+        # NOTE: if this restriction is relaxed, still check for "localhost"
+        if '.' not in dom or len(dom.rpartition('.')[2]) < 2:
+            sys.stderr.write(
+                "Error: Domain requires a TLD of 2 characters or more\n")
+            print
+            print "Example: -d example.tld -d '*.example.tld' -d cdn.example.tld"
+            print
+            raise SystemExit(1)
+
+
 def get_options():
     usage = """
 Usage: %(name)s -u <user> -k <api_key> -s <webserver> -d <domain> [options]
@@ -716,17 +748,7 @@ Performance tip:
             op.print_help()
             raise SystemExit(1)
 
-    # check for '/' in any domain names (might be a URL)
-    # TODO: domain is not an IP
-    # TODO: check domain uses a dot and a tld of 2 chars or more
-    if [dom for dom in options.domains if '/' in dom]:
-        sys.stderr.write(
-              "Error: Domain contains illegal character '/' in it.\n")
-        print "       Did you use a URL instead of just the domain?\n"
-        print "Examples: -d example.com -d '*.example.com' -d cdn.example.org"
-        print ""
-        raise SystemExit(1)
-
+    check_domains(options.domains)
     return options
 
 
