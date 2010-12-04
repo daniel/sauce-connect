@@ -1,6 +1,6 @@
 ??????????  1.0-r20  Sauce Labs <help@saucelabs.com>
 
-    * Validate requested domains are acceptable.
+    * Check requested domains are usable.
     * Wait a bit between SSH restarts to avoid failed port forwarding.
 
 2010-11-18  1.0-r19  Sauce Labs <help@saucelabs.com>
