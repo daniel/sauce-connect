@@ -3,7 +3,6 @@
 from __future__ import with_statement
 
 # TODO:
-#   * better domain checking (see TODOs in get_options)
 #   * ?? Use "-o StrictHostKeyChecking no"
 #   * Move to REST API v1
 #   * windows: SSH link healthcheck (PuTTY session file hack?)
