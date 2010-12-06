@@ -1,4 +1,4 @@
-??????????  1.0-r20  Sauce Labs <help@saucelabs.com>
+2010-12-06  1.0-r20  Sauce Labs <help@saucelabs.com>
 
     * Check requested domains are usable.
     * Wait a bit between SSH restarts to avoid failed port forwarding.
