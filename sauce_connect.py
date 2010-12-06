@@ -147,7 +147,7 @@ class TunnelMachine(object):
                 except Exception, e:
                     raise TunnelMachineError(
                         "An error occurred while contacting Sauce Labs REST "
-                        "API (%s). Please contact help@saucelabs.com.")
+                        "API (%s). Please contact help@saucelabs.com." % str(e))
         return wrapper
 
     @_retry_rest_api
