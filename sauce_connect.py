@@ -632,7 +632,7 @@ def check_domains(domains):
             sys.stderr.write(
                 "Error: Domain contains illegal character '/' in it.\n")
             print "       Did you use a URL instead of just the domain?\n"
-            print "Examples: -d example.com -d '*.example.com' -d cdn.example.org"
+            print "Examples: -d example.com -d '*.example.com' -d another.site"
             print
             raise SystemExit(1)
 
@@ -640,7 +640,7 @@ def check_domains(domains):
         if all(map(lambda c: c.isdigit() or c == '.', dom)):
             sys.stderr.write("Error: Domain must be a hostname not an IP\n")
             print
-            print "Examples: -d example.com -d '*.example.com' -d cdn.example.org"
+            print "Examples: -d example.com -d '*.example.com' -d another.site"
             print
             raise SystemExit(1)
 
@@ -650,7 +650,16 @@ def check_domains(domains):
             sys.stderr.write(
                 "Error: Domain requires a TLD of 2 characters or more\n")
             print
-            print "Example: -d example.tld -d '*.example.tld' -d cdn.example.tld"
+            print "Example: -d example.tld -d '*.example.tld' -d another.tld"
+            print
+            raise SystemExit(1)
+
+        # *.com will break uploading to S3
+        if dom == "*.com":
+            sys.stderr.write(
+                "Error: Matching *.com will break videos and logs. Use a hostname.\n")
+            print
+            print "Example: -d example.com -d *.example.com"
             print
             raise SystemExit(1)
 
