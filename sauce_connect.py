@@ -3,7 +3,6 @@
 from __future__ import with_statement
 
 # TODO:
-#   * ?? Use "-o StrictHostKeyChecking no"
 #   * Move to REST API v1
 #   * windows: SSH link healthcheck (PuTTY session file hack?)
 #   * Daemonizing
@@ -376,12 +375,6 @@ class ReverseSSH(object):
         if os.path.exists(ssh_config_file):
             logger.debug("Found %s" % ssh_config_file)
 
-        ssh_known_hosts = os.path.join(os.environ['HOME'], ".ssh", "known_hosts")
-        if os.path.exists(ssh_known_hosts):
-            if not os.path.isfile(ssh_known_hosts) or os.path.islink(ssh_known_hosts):
-                logger.debug("SSH known_hosts file (%s) is not a regular file "
-                             % ssh_known_hosts)
-
     @property
     def _dash_Rs(self):
         dash_Rs = ""
@@ -403,14 +396,9 @@ class ReverseSSH(object):
         verbosity = "-v" if self.debug else "-q"
         host_ip = socket.gethostbyname(self.tunnel.host)
         script = (
-            "spawn ssh-keygen %s -R %s;%s;"
-                % (verbosity, self.tunnel.host, wait) +
-            "spawn ssh-keygen %s -R %s;%s;" % (verbosity, host_ip, wait) +
-            "spawn ssh %s -p 22 -l %s -o ServerAliveInterval=%s -N %s %s;"
+            "spawn ssh %s -p 22 -l %s -o ServerAliveInterval=%s -o StrictHostKeyChecking=no -N %s %s;"
                 % (verbosity, self.tunnel.user, HEALTH_CHECK_INTERVAL,
                    self._dash_Rs, self.tunnel.host) +
-            'expect \\"Are you sure you want to continue connecting'
-            ' (yes/no)?\\";send yes\\r;'
             "expect *password:;send -- %s\\r;" % self.tunnel.password +
             "expect -timeout -1 timeout")
         return script
