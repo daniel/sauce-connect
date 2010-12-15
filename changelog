@@ -1,4 +1,4 @@
-??????????  1.0-r21  Sauce Labs <help@saucelabs.com>
+2010-12-15  1.0-r21  Sauce Labs <help@saucelabs.com>
 
     * Prevent failure due to a corrupt known_hosts file.
     * Ignore OpenSSH config files by default (override with --use-ssh-config).
