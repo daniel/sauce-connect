@@ -1,3 +1,7 @@
+??????????  1.0-r21  Sauce Labs <help@saucelabs.com>
+
+    * Prevent failure due to a corrupt known_hosts file.
+
 2010-12-06  1.0-r20  Sauce Labs <help@saucelabs.com>
 
     * Check requested domains are usable.

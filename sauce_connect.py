@@ -10,7 +10,6 @@ from __future__ import with_statement
 #     * issue: unix: null file descriptors causes Expect script to fail
 #   * Renew tunnel lease (backend not implemented)
 #   * Check tunnel machine ports are open (backend not implemented)
-#
 
 import os
 import sys
@@ -351,11 +350,13 @@ class ReverseSSHError(Exception):
 
 class ReverseSSH(object):
 
-    def __init__(self, tunnel, host, ports, tunnel_ports, debug=False):
+    def __init__(self, tunnel, host, ports, tunnel_ports,
+                 use_ssh_config=False, debug=False):
         self.tunnel = tunnel
         self.host = host
         self.ports = ports
         self.tunnel_ports = tunnel_ports
+        self.use_ssh_config = use_ssh_config
         self.debug = debug
 
         self.proc = None
@@ -374,6 +375,8 @@ class ReverseSSH(object):
         ssh_config_file = os.path.join(os.environ['HOME'], ".ssh", "config")
         if os.path.exists(ssh_config_file):
             logger.debug("Found %s" % ssh_config_file)
+            if self.use_ssh_config:
+                logger.warn("Using local SSH config")
 
     @property
     def _dash_Rs(self):
@@ -383,22 +386,25 @@ class ReverseSSH(object):
         return dash_Rs
 
     def get_plink_command(self):
+        """Return the Windows SSH command."""
         verbosity = "-v" if self.debug else ""
         return ("plink\plink %s -l %s -pw %s -N %s %s"
                 % (verbosity, self.tunnel.user, self.tunnel.password,
                    self._dash_Rs, self.tunnel.host))
 
     def get_expect_script(self):
+        """Return the Unix SSH command."""
         wait = "wait"
         if is_openbsd:  # using 'wait;' hangs the script on OpenBSD
             wait = "wait -nowait;sleep 1"  # hack
 
         verbosity = "-v" if self.debug else "-q"
+        config_file = "" if self.use_ssh_config else "-F /dev/null"
         host_ip = socket.gethostbyname(self.tunnel.host)
         script = (
-            "spawn ssh %s -p 22 -l %s -o ServerAliveInterval=%s -o StrictHostKeyChecking=no -N %s %s;"
-                % (verbosity, self.tunnel.user, HEALTH_CHECK_INTERVAL,
-                   self._dash_Rs, self.tunnel.host) +
+            "spawn ssh %s %s -p 22 -l %s -o ServerAliveInterval=%s -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -N %s %s;"
+                % (verbosity, config_file, self.tunnel.user,
+                   HEALTH_CHECK_INTERVAL, self._dash_Rs, self.tunnel.host) +
             "expect *password:;send -- %s\\r;" % self.tunnel.password +
             "expect -timeout -1 timeout")
         return script
@@ -527,7 +533,7 @@ def peace_out(tunnel=None, returncode=0, atexit=False):
         logger.info("\ Exiting /")
         raise SystemExit(returncode)
     else:
-        logger.debug("--- fin ---")
+        logger.debug("-- fin --")
 
 
 def setup_signal_handler(tunnel, options):
@@ -706,16 +712,20 @@ Performance tip:
     og.add_option("--readyfile",
                   help="Path of the file to drop when the tunnel is ready "
                        "for tests to run. By default, no file is dropped.")
+    og.add_option("--use-ssh-config", action="store_true", default=False,
+                  help="Use the local SSH config. WARNING: Turning this on "
+                       "may break the script!")
+    og.add_option("--rest-url", default="https://saucelabs.com/rest",
+                  help=optparse.SUPPRESS_HELP)
+    og.add_option("--allow-unclean-exit", action="store_true", default=False,
+                  help=optparse.SUPPRESS_HELP)
     op.add_option_group(og)
 
     og = optparse.OptionGroup(op, "Script debugging options")
-    og.add_option("--rest-url", default="https://saucelabs.com/rest",
-                  help="[%default]")
-    og.add_option("--debug-ssh", action="store_true", default=False)
+    og.add_option("--debug-ssh", action="store_true", default=False,
+                  help="Log SSH output.")
     og.add_option("--latency-log", type=int, default=LATENCY_LOG,
-                  help="Threshold above which latency (ms) will be "
-                       "logged. [%default]")
-    og.add_option("--allow-unclean-exit", action="store_true", default=False)
+                  help="Threshold for logging latency (ms) [%default]")
     op.add_option_group(og)
 
     (options, args) = op.parse_args()
@@ -869,8 +879,10 @@ def run(options, dependency_versions=None):
             logger.info("** Please contact help@saucelabs.com")
             peace_out(tunnel, returncode=1)  # exits
 
-    ssh = ReverseSSH(tunnel, options.host, options.ports, options.tunnel_ports,
-                     options.debug_ssh)
+    ssh = ReverseSSH(tunnel=tunnel, host=options.host,
+                     ports=options.ports, tunnel_ports=options.tunnel_ports,
+                     use_ssh_config=options.use_ssh_config,
+                     debug=options.debug_ssh)
     try:
         ssh.run(options.readyfile)
     except (ReverseSSHError, TunnelMachineError), e:
