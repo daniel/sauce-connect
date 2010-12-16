@@ -830,6 +830,7 @@ def run(options, dependency_versions=None):
         print "|  Contact us: http://saucelabs.com/forums          |"
         print "-----------------------------------------------------"
     logger.info("/ Starting \\")
+    logger.info("Please wait for a \"You may start your tests\" message to start your tests.")
     logger.info("%s" % DISPLAY_VERSION)
     check_version()
 
