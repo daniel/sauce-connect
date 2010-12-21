@@ -59,6 +59,12 @@ is_openbsd = platform.system().lower() == "openbsd"
 logger = logging.getLogger(NAME)
 
 
+class DeleteRequest(urllib2.Request):
+
+    def get_method(self):
+        return "DELETE"
+
+
 class HTTPResponseError(Exception):
 
     def __init__(self, msg):
@@ -155,21 +161,6 @@ class TunnelMachine(object):
                 raise HTTPResponseError(resp.msg)
             return json.loads(resp.read())
 
-    @_retry_rest_api
-    def _get_delete_doc(self, url):
-        # urllib2 doesn support the DELETE method (lame), so we build our own
-        if self.base_url.startswith("https"):
-            make_conn = httplib.HTTPSConnection
-        else:
-            make_conn = httplib.HTTPConnection
-        with closing(make_conn(self.rest_host)) as conn:
-            conn.request(method="DELETE", url=url,
-                         headers=self.basic_auth_header)
-            resp = conn.getresponse()
-            if resp.reason != "OK":
-                raise HTTPResponseError(resp.reason)
-            return json.loads(resp.read())
-
     def _provision_tunnel(self):
         # Shutdown any tunnel using a requested domain
         kill_list = set()
@@ -186,7 +177,7 @@ class TunnelMachine(object):
                     logger.debug(
                         "Shutting down old tunnel host: %s" % tunnel_id)
                     url = "%s/%s" % (self.base_url, tunnel_id)
-                    doc = self._get_delete_doc(url)
+                    doc = self._get_doc(DeleteRequest(url=url))
                     if not doc.get('ok'):
                         logger.warning("Old tunnel host failed to shutdown?")
                         continue
@@ -243,7 +234,7 @@ class TunnelMachine(object):
         logger.debug("Tunnel host ID: %s" % self.id)
 
         try:
-            doc = self._get_delete_doc(self.url)
+            doc = self._get_doc(DeleteRequest(url=self.url))
         except TunnelMachineError as e:
             logger.warning("Unable to shut down tunnel host")
             logger.debug("Shut down failed because: %s", str(e))
