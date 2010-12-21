@@ -117,9 +117,7 @@ class TunnelMachine(object):
                         "help@saucelabs.com.")
 
     def _set_urlopen(self, user, password):
-        # always send Basic Auth header for GET and POST
-        # NOTE: we directly construct the header because it is more reliable
-        #   and more efficient than HTTPBasicAuthHandler and we always need it
+        # always send Basic Auth header (HTTPBasicAuthHandler was unreliable)
         opener = urllib2.build_opener()
         opener.addheaders = self.basic_auth_header.items()
         self.urlopen = opener.open
@@ -822,7 +820,7 @@ def run(options, dependency_versions=None):
         print "|  Contact us: http://saucelabs.com/forums          |"
         print "-----------------------------------------------------"
     logger.info("/ Starting \\")
-    logger.info("Please wait for a \"You may start your tests\" message to start your tests.")
+    logger.info('Please wait for "You may start your tests" to start your tests.')
     logger.info("%s" % DISPLAY_VERSION)
     check_version()
 
