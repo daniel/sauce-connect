@@ -1,3 +1,7 @@
+2010-12-20  1.0-r22  Sauce Labs <help@saucelabs.com>
+
+    * Support using an HTTP/HTTPS proxy for REST API connections.
+
 2010-12-15  1.0-r21  Sauce Labs <help@saucelabs.com>
 
     * Prevent failure due to a corrupt known_hosts file.
