@@ -244,8 +244,9 @@ class TunnelMachine(object):
 
         try:
             doc = self._get_delete_doc(self.url)
-        except TunnelMachineError:
+        except TunnelMachineError as e:
             logger.warning("Unable to shut down tunnel host")
+            logger.debug("Shut down failed because: %s", str(e))
             self.is_shutdown = True  # fuhgeddaboudit
             return
         assert doc.get('ok')
