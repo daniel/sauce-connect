@@ -233,7 +233,7 @@ class TunnelMachine(object):
 
         try:
             doc = self._get_doc(DeleteRequest(url=self.url))
-        except TunnelMachineError as e:
+        except TunnelMachineError, e:
             logger.warning("Unable to shut down tunnel host")
             logger.debug("Shut down failed because: %s", str(e))
             self.is_shutdown = True  # fuhgeddaboudit
